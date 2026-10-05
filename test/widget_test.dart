@@ -150,8 +150,8 @@ void main() {
       PackageInfo.setMockInitialValues(
         appName: 'Rezervări Pensiune',
         packageName: 'app.sayitapp.pensiune',
-        version: '1.5.0',
-        buildNumber: '9',
+        version: '1.0.0',
+        buildNumber: '1',
         buildSignature: '',
       );
     });
@@ -159,7 +159,7 @@ void main() {
     testWidgets('apare sub tabel', (tester) async {
       await tester.pumpWidget(const ManagementApp());
       await tester.pumpAndSettle();
-      expect(find.text('v1.5.0'), findsOneWidget);
+      expect(find.text('v1.0.0'), findsOneWidget);
     });
 
     testWidgets('încape pe un telefon îngust (360 px)', (tester) async {
@@ -168,7 +168,7 @@ void main() {
       addTearDown(tester.view.reset);
       await tester.pumpWidget(const ManagementApp());
       await tester.pumpAndSettle();
-      expect(find.text('v1.5.0'), findsOneWidget);
+      expect(find.text('v1.0.0'), findsOneWidget);
       expect(tester.takeException(), isNull); // fără RenderFlex overflow
     });
   });
