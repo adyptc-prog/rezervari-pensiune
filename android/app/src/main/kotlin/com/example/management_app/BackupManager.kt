@@ -11,7 +11,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Backup / restore al datelor Organizator (vezi BackupFormat) într-un singur
+ * Backup / restore al datelor Rezervări Pensiune (vezi BackupFormat) într-un singur
  * folder ales de utilizator prin Storage Access Framework — pe stick-ul USB
  * sau în memoria telefonului. Același folder e folosit și de backup-ul
  * automat zilnic (OrganizatorBackupWorker).
@@ -25,7 +25,7 @@ object BackupManager {
     private const val KEY_LAST_AUTO_ERROR = "last_auto_backup_error"
     private const val KEY_LAST_MANUAL_AT = "last_manual_backup_at"
     private const val FLUTTER_PREFS = "FlutterSharedPreferences"
-    private const val SAFETY_FILE = "before_restore.orgbackup"
+    private const val SAFETY_FILE = "before_restore.penbackup"
 
     const val AUTO_KEEP = 14
 
@@ -238,7 +238,7 @@ object BackupManager {
      * Înlocuiește datele cu cele din backup. Ordinea contează:
      * 1. decriptare (dacă e cazul) și validare completă (aplicație, versiune,
      *    checksum) — înainte de orice scriere;
-     * 2. copie de siguranță a stării curente (before_restore.orgbackup, intern);
+     * 2. copie de siguranță a stării curente (before_restore.penbackup, intern);
      * 3. anularea alarmelor stării curente — altfel ar declanșa payload-urile
      *    restaurate la ore greșite (ID-urile se refolosesc);
      * 4. înlocuirea datelor + identitatea de licență;

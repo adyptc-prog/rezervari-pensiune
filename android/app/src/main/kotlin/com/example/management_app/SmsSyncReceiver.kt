@@ -9,20 +9,20 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Ascultă SMS-urile primite și stochează în coadă pe cele cu prefix ORG:
- * (mesaje de sincronizare trimise de celălalt dispozitiv Organizator).
+ * Ascultă SMS-urile primite și stochează în coadă pe cele cu prefix PEN:
+ * (mesaje de sincronizare trimise de celălalt dispozitiv Rezervări Pensiune).
  * Fiecare tabel poate avea propriul partener de sincronizare, deci fiecare
  * mesaj e etichetat cu tabelul al cărui partener configurat corespunde
  * expeditorului. Mesajele trebuie să fie semnate cu codul de împerechere al
  * tabelului (vezi SyncAuth) — cele nesemnate sunt ignorate.
  *
  * Flutter citește coada la pornire și la revenire în foreground via
- * MethodChannel "organizator/sms" → getSyncMessages / ackSyncMessages.
+ * MethodChannel "pensiune/sms" → getSyncMessages / ackSyncMessages.
  */
 class SmsSyncReceiver : BroadcastReceiver() {
 
     companion object {
-        const val SYNC_PREFIX = "ORG:"
+        const val SYNC_PREFIX = "PEN:"
         const val PREFS_NAME  = "SyncQueue"
         const val QUEUE_KEY   = "queue"
 
@@ -30,8 +30,8 @@ class SmsSyncReceiver : BroadcastReceiver() {
         // fișierul de licență semnat, „R” e cererea unui telefon fără licență
         // (trimisă când își configurează partenerul după ce celălalt a făcut-o
         // deja — altfel licența trimisă atunci ar fi fost ignorată).
-        const val LICENSE_PREFIX         = "ORG:L:"
-        const val LICENSE_REQUEST_PREFIX = "ORG:R:"
+        const val LICENSE_PREFIX         = "PEN:L:"
+        const val LICENSE_REQUEST_PREFIX = "PEN:R:"
 
         // Protejează scrierile concurente în coadă — atât acest receiver, cât și
         // ClientBookingReceiver (rezervări de la clienți) pot scrie simultan.
@@ -111,7 +111,7 @@ class SmsSyncReceiver : BroadcastReceiver() {
         fun secretKey(boardId: String) = "flutter.sync_secret_$boardId"
 
         /**
-         * Trimite [message] (ex. „ORG:A:{...}”) partenerului tabelului
+         * Trimite [message] (ex. „PEN:A:{...}”) partenerului tabelului
          * [boardId], semnat cu codul de împerechere. Fără partener sau fără
          * cod valid nu trimite nimic (partenerul l-ar respinge oricum).
          */

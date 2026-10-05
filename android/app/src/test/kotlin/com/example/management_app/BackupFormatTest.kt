@@ -148,14 +148,14 @@ class BackupFormatTest {
     @Test
     fun `retentie - se sterg doar backup-urile automate cele mai vechi`() {
         val names = listOf(
-            "organizator_auto_20260101_000000.orgbackup",
-            "organizator_auto_20260103_000000.orgbackup",
-            "organizator_auto_20260102_000000.orgbackup",
-            "organizator_20250101_120000.orgbackup", // manual — nu se atinge
-            "organizator_auto_20250101_000000.txt",  // alt tip — nu se atinge
+            "pensiune_auto_20260101_000000.penbackup",
+            "pensiune_auto_20260103_000000.penbackup",
+            "pensiune_auto_20260102_000000.penbackup",
+            "pensiune_20250101_120000.penbackup", // manual — nu se atinge
+            "pensiune_auto_20250101_000000.txt",  // alt tip — nu se atinge
         )
         assertEquals(
-            listOf("organizator_auto_20260101_000000.orgbackup"),
+            listOf("pensiune_auto_20260101_000000.penbackup"),
             BackupFormat.autoBackupsToDelete(names, keep = 2),
         )
         assertTrue(BackupFormat.autoBackupsToDelete(names, keep = 14).isEmpty())

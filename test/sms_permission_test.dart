@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:management_app/main.dart';
+import 'package:pensiune_app/main.dart';
 
 // Canalul nativ al plugin-ului permission_handler.
 const _permChannel = MethodChannel('flutter.baseflow.com/permissions/methods');
@@ -224,7 +224,7 @@ void main() {
   });
 
   group('SMS netrimis (raportul sistemului)', () {
-    const smsChannel = MethodChannel('organizator/sms');
+    const smsChannel = MethodChannel('pensiune/sms');
     late Map<String, Object?>? failure;
     late int dismissed;
 

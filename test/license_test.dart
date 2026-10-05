@@ -3,10 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:management_app/license_screen.dart';
-import 'package:management_app/license_service.dart';
+import 'package:pensiune_app/license_screen.dart';
+import 'package:pensiune_app/license_service.dart';
 
-const _channel = MethodChannel('organizator/license');
+const _channel = MethodChannel('pensiune/license');
 
 // Răspunsurile simulate ale părții native (MainActivity / LicenseStore).
 Map<String, Object?> _activeLicense({int days = 200, bool lifetime = false}) => {

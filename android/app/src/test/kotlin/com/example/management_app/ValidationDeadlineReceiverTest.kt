@@ -84,7 +84,7 @@ class ValidationDeadlineReceiverTest {
         val alarmId = seedUnpaidBooking(syncId)
         assertTrue(alarmId < 0)
 
-        assertEquals(listOf("ORG:D:$syncId"), fireAndWait(alarmId))
+        assertEquals(listOf("PEN:D:$syncId"), fireAndWait(alarmId))
     }
 
     @Test
@@ -93,6 +93,6 @@ class ValidationDeadlineReceiverTest {
         val alarmId = seedUnpaidBooking(syncId)
         assertTrue(alarmId >= 0)
 
-        assertEquals(listOf("ORG:D:$syncId"), fireAndWait(alarmId))
+        assertEquals(listOf("PEN:D:$syncId"), fireAndWait(alarmId))
     }
 }

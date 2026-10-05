@@ -11,7 +11,7 @@ typedef LicenseShareOutcome = ({int sent, String? refused});
 
 // ─── Serviciu licențiere ──────────────────────────────────────────────────────
 class LicenseService {
-  static const _ch              = MethodChannel('organizator/license');
+  static const _ch              = MethodChannel('pensiune/license');
   static const _kTrialStartKey  = 'trial_start_date';
   static const _kExpiryWarnedOn = 'license_expiry_warned_on';
   static const _trialDays       = 30;

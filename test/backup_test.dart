@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:management_app/backup_screen.dart';
-import 'package:management_app/backup_service.dart';
+import 'package:pensiune_app/backup_screen.dart';
+import 'package:pensiune_app/backup_service.dart';
 
-const _channel = MethodChannel('organizator/backup');
+const _channel = MethodChannel('pensiune/backup');
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -52,7 +52,7 @@ void main() {
         case 'createBackup':
           return {
             'id': 'doc1',
-            'name': 'organizator_20260924_101500.orgbackup',
+            'name': 'pensiune_20260924_101500.penbackup',
             'size': 2048,
             'modifiedAt': 0,
           };
@@ -141,7 +141,7 @@ void main() {
     expect(find.text('Ultimul backup automat: 24.09.2026 00:01'), findsOneWidget);
     await tester.tap(find.text('Creează backup acum'));
     await tester.pumpAndSettle();
-    expect(find.text('Backup creat: organizator_20260924_101500.orgbackup'),
+    expect(find.text('Backup creat: pensiune_20260924_101500.penbackup'),
         findsOneWidget);
   });
 
@@ -180,7 +180,7 @@ void main() {
     backups = [
       {
         'id': 'doc9',
-        'name': 'organizator_auto_20260924_000100.orgbackup',
+        'name': 'pensiune_auto_20260924_000100.penbackup',
         'modifiedAt': DateTime(2026, 9, 24, 0, 1).millisecondsSinceEpoch,
         'size': 4096,
         'auto': true,
@@ -303,7 +303,7 @@ void main() {
       backups = [
         {
           'id': 'doc9',
-          'name': 'organizator_auto_20260924_000100.orgbackup',
+          'name': 'pensiune_auto_20260924_000100.penbackup',
           'modifiedAt': DateTime(2026, 9, 24, 0, 1).millisecondsSinceEpoch,
           'size': 4096,
           'auto': true,

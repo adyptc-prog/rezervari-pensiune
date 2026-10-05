@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:management_app/main.dart';
+import 'package:pensiune_app/main.dart';
 
 void main() {
   setUpAll(() async {
@@ -22,7 +22,7 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('Organizator'), findsOneWidget);
+    expect(find.text('Rezervări Pensiune'), findsOneWidget);
     expect(find.text('Nr.'), findsOneWidget);
     expect(find.text('Nume'), findsOneWidget);
     expect(find.text('Descriere'), findsOneWidget);
@@ -148,8 +148,8 @@ void main() {
   group('versiunea aplicației', () {
     setUp(() {
       PackageInfo.setMockInitialValues(
-        appName: 'Organizator',
-        packageName: 'app.sayitapp.organizator',
+        appName: 'Rezervări Pensiune',
+        packageName: 'app.sayitapp.pensiune',
         version: '1.5.0',
         buildNumber: '9',
         buildSignature: '',

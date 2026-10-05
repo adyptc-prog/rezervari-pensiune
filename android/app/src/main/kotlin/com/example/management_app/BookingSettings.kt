@@ -158,7 +158,7 @@ object BookingSettings {
     // între timp aplicația, primește „nu am găsit nicio programare activă”,
     // deși rezervarea chiar există (doar că încă n-a ajuns în lista aplicată).
     fun loadBookedItems(context: Context, boardId: String): List<BookedItem> {
-        // Cheie = syncId, ca o rezervare cu update în coadă (ORG:U:) să
+        // Cheie = syncId, ca o rezervare cu update în coadă (PEN:U:) să
         // înlocuiască versiunea persistată, nu să apară de două ori.
         val result = LinkedHashMap<String, BookedItem>()
 
@@ -197,7 +197,7 @@ object BookingSettings {
         }
 
         for ((prefix, payload) in queuedEntries(context, boardId)) {
-            if (prefix == "ORG:D:") {
+            if (prefix == "PEN:D:") {
                 // Ștergere încă neprocesată — nu o oferim la anulare.
                 result.remove(payload.trim())
                 continue
@@ -288,13 +288,13 @@ object BookingSettings {
             val entry = arr.optJSONObject(i) ?: continue
             if (entry.optString("board", "") != boardId) continue
             val msg = entry.optString("msg", "")
-            if (msg.length < 6 || !msg.startsWith("ORG:")) continue
+            if (msg.length < 6 || !msg.startsWith("PEN:")) continue
             result.add(msg.substring(0, 6) to msg.substring(6))
         }
         return result
     }
 
-    // Payload-ul JSON al unei intrări „ORG:A/I/U:”, sau null dacă e corupt.
+    // Payload-ul JSON al unei intrări „PEN:A/I/U:”, sau null dacă e corupt.
     private fun parsePayload(payload: String): JSONObject? = try {
         JSONObject(payload)
     } catch (_: Exception) {
@@ -302,5 +302,5 @@ object BookingSettings {
         null
     }
 
-    private val ITEM_PREFIXES = setOf("ORG:A:", "ORG:I:", "ORG:U:")
+    private val ITEM_PREFIXES = setOf("PEN:A:", "PEN:I:", "PEN:U:")
 }

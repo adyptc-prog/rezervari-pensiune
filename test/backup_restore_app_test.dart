@@ -6,13 +6,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 
-import 'package:management_app/backup_service.dart';
-import 'package:management_app/main.dart';
+import 'package:pensiune_app/backup_service.dart';
+import 'package:pensiune_app/main.dart';
 
 // Restaurarea scrie datele nativ (BackupManager.kt), pe lângă cache-ul Dart
 // al SharedPreferences. Testul verifică pe aplicația întreagă că, după
 // restaurare, tabelul afișează datele restaurate — nu cele vechi din cache.
-const _backupChannel = MethodChannel('organizator/backup');
+const _backupChannel = MethodChannel('pensiune/backup');
 
 String _items(List<String> names) => jsonEncode([
       for (var i = 0; i < names.length; i++)

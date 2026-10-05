@@ -13,9 +13,9 @@ import org.json.JSONObject
 class MainActivity : FlutterActivity() {
 
     companion object {
-        const val SMS_CHANNEL     = "organizator/sms"
-        const val LICENSE_CHANNEL = "organizator/license"
-        const val BACKUP_CHANNEL  = "organizator/backup"
+        const val SMS_CHANNEL     = "pensiune/sms"
+        const val LICENSE_CHANNEL = "pensiune/license"
+        const val BACKUP_CHANNEL  = "pensiune/backup"
         private const val PICK_LICENSE_REQUEST_CODE = 8021
         private const val PICK_BACKUP_FOLDER_REQUEST_CODE = 8022
         private const val PICK_RESTORE_BACKUP_REQUEST_CODE = 8023
@@ -157,7 +157,7 @@ class MainActivity : FlutterActivity() {
                             ?: run { result.error("ARG", "missing id", null); return@setMethodCallHandler }
                         val triggerAtMs = call.argument<Long>("triggerAtMs")
                             ?: run { result.error("ARG", "missing triggerAtMs", null); return@setMethodCallHandler }
-                        val title       = call.argument<String>("title") ?: "Organizator"
+                        val title       = call.argument<String>("title") ?: "Rezervări Pensiune"
                         val body        = call.argument<String>("body")  ?: ""
                         scheduleNotifAlarm(id, triggerAtMs, title, body)
                         result.success(null)

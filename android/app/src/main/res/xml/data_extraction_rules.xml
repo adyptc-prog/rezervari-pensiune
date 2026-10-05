@@ -7,13 +7,13 @@
         <exclude domain="sharedpref" path="BackupPrefs.xml" />
         <exclude domain="sharedpref" path="SyncQueue.xml" />
         <exclude domain="sharedpref" path="ClientBookingPrefs.xml" />
-        <exclude domain="file" path="before_restore.orgbackup" />
+        <exclude domain="file" path="before_restore.penbackup" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="LicensePrefs.xml" />
         <exclude domain="sharedpref" path="BackupPrefs.xml" />
         <exclude domain="sharedpref" path="SyncQueue.xml" />
         <exclude domain="sharedpref" path="ClientBookingPrefs.xml" />
-        <exclude domain="file" path="before_restore.orgbackup" />
+        <exclude domain="file" path="before_restore.penbackup" />
     </device-transfer>
 </data-extraction-rules>

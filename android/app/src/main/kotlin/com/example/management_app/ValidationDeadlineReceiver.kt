@@ -48,7 +48,7 @@ class ValidationDeadlineReceiver : BroadcastReceiver() {
         if (item.validated) return // plata a fost confirmată între timp
 
         val boardName = BookingSettings.loadBoards(context).firstOrNull { it.id == boardId }?.name ?: ""
-        SmsSyncReceiver.enqueue(context, boardId, "ORG:D:$syncId")
+        SmsSyncReceiver.enqueue(context, boardId, "PEN:D:$syncId")
 
         val phone = item.phones.firstOrNull() ?: return
         sendSmsNow(

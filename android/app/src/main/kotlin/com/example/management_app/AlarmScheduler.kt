@@ -8,7 +8,7 @@ import android.os.Build
 
 /**
  * Primitive comune de programare/anulare a alarmelor native (AlarmManager),
- * folosite atât din MainActivity (canalul Flutter "organizator/sms"), cât și
+ * folosite atât din MainActivity (canalul Flutter "pensiune/sms"), cât și
  * din AlarmRescheduler (repornire după reboot).
  */
 object AlarmScheduler {

@@ -34,20 +34,20 @@ class SyncQueueTest {
 
     @Test
     fun `mesajul sosit in timpul procesarii nu se pierde`() {
-        SmsSyncReceiver.enqueue(context, "b1", "ORG:A:{\"s\":\"a\"}")
+        SmsSyncReceiver.enqueue(context, "b1", "PEN:A:{\"s\":\"a\"}")
         val read = SmsSyncReceiver.snapshot(context)
 
         // Un SMS nou sosește cât timp Flutter încă procesează ce a citit.
-        SmsSyncReceiver.enqueue(context, "b1", "ORG:D:b")
+        SmsSyncReceiver.enqueue(context, "b1", "PEN:D:b")
         SmsSyncReceiver.acknowledge(context, ids(read))
 
-        assertEquals(listOf("ORG:D:b"), msgs(SmsSyncReceiver.snapshot(context)))
+        assertEquals(listOf("PEN:D:b"), msgs(SmsSyncReceiver.snapshot(context)))
     }
 
     @Test
     fun `fiecare intrare are un id unic`() {
-        SmsSyncReceiver.enqueue(context, "b1", "ORG:D:x")
-        SmsSyncReceiver.enqueue(context, "b1", "ORG:D:x")
+        SmsSyncReceiver.enqueue(context, "b1", "PEN:D:x")
+        SmsSyncReceiver.enqueue(context, "b1", "PEN:D:x")
         val all = ids(SmsSyncReceiver.snapshot(context))
         assertEquals(2, all.toSet().size)
     }
@@ -55,11 +55,11 @@ class SyncQueueTest {
     @Test
     fun `intrarile vechi fara id primesc unul stabil si pot fi confirmate`() {
         context.getSharedPreferences(SmsSyncReceiver.PREFS_NAME, Context.MODE_PRIVATE).edit()
-            .putString(SmsSyncReceiver.QUEUE_KEY, """["ORG:D:x",{"board":"b2","msg":"ORG:D:y"}]""")
+            .putString(SmsSyncReceiver.QUEUE_KEY, """["PEN:D:x",{"board":"b2","msg":"PEN:D:y"}]""")
             .commit()
 
         val first = SmsSyncReceiver.snapshot(context)
-        assertEquals(listOf("ORG:D:x", "ORG:D:y"), msgs(first))
+        assertEquals(listOf("PEN:D:x", "PEN:D:y"), msgs(first))
         // Același id la citiri repetate — altfel confirmarea n-ar găsi intrarea.
         assertEquals(ids(first), ids(SmsSyncReceiver.snapshot(context)))
 
@@ -73,21 +73,21 @@ class SyncQueueTest {
             .putString(SmsSyncReceiver.QUEUE_KEY, "{corupt")
             .commit()
 
-        SmsSyncReceiver.enqueue(context, "b1", "ORG:D:z")
-        assertEquals(listOf("ORG:D:z"), msgs(SmsSyncReceiver.snapshot(context)))
+        SmsSyncReceiver.enqueue(context, "b1", "PEN:D:z")
+        assertEquals(listOf("PEN:D:z"), msgs(SmsSyncReceiver.snapshot(context)))
     }
 
     @Test
     fun `confirmarea unor id-uri necunoscute nu sterge nimic`() {
-        SmsSyncReceiver.enqueue(context, "b1", "ORG:D:z")
+        SmsSyncReceiver.enqueue(context, "b1", "PEN:D:z")
         SmsSyncReceiver.acknowledge(context, listOf("necunoscut"))
-        assertTrue(msgs(SmsSyncReceiver.snapshot(context)).contains("ORG:D:z"))
+        assertTrue(msgs(SmsSyncReceiver.snapshot(context)).contains("PEN:D:z"))
     }
 
     @Test
     fun `schimbarile native sunt marcate locale, cele de la partener nu`() {
-        SmsSyncReceiver.enqueue(context, "b1", "ORG:D:bot")
-        SmsSyncReceiver.enqueue(context, "b1", "ORG:D:p", SmsSyncReceiver.ORIGIN_PARTNER)
+        SmsSyncReceiver.enqueue(context, "b1", "PEN:D:bot")
+        SmsSyncReceiver.enqueue(context, "b1", "PEN:D:p", SmsSyncReceiver.ORIGIN_PARTNER)
         val arr = JSONArray(SmsSyncReceiver.snapshot(context))
         assertEquals("local", arr.getJSONObject(0).getString("origin"))
         assertEquals("partner", arr.getJSONObject(1).getString("origin"))

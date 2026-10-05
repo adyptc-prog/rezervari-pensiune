@@ -36,7 +36,7 @@ import java.util.concurrent.Executors
  * SharedPreferences prin BookingSettings/FreeSlotCalculator/DayRangeCalculator,
  * ca să răspundă instant chiar dacă aplicația e complet închisă. Rezervarea
  * confirmată/anulată e scrisă în coada de sincronizare existentă ca mesaj
- * „ORG:A:”/„ORG:D:” — Flutter o preia automat la următoarea deschidere, cu
+ * „PEN:A:”/„PEN:D:” — Flutter o preia automat la următoarea deschidere, cu
  * logica de sincronizare deja existentă (numerotare, alarme, sloturi libere
  * etc.), fără cod separat pentru asta.
  *
@@ -122,8 +122,10 @@ class ClientBookingReceiver : BroadcastReceiver() {
     // internal: apelat direct de testele Robolectric (fără SMS-uri reale).
     internal fun handleMessage(context: Context, sender: String, rawBody: String) {
         Diag.i("handleMessage sender=${Diag.mask(sender)} len=${rawBody.length}")
-        if (rawBody.startsWith("ORG:")) {
-            Diag.i("handleMessage: ignored, looks like sync message (ORG:)")
+        // Mesaje de sincronizare — ale acestei aplicații (PEN:) sau ale
+        // aplicației Organizator (ORG:), dacă e pe același telefon.
+        if (rawBody.startsWith("PEN:") || rawBody.startsWith("ORG:")) {
+            Diag.i("handleMessage: ignored, looks like sync message")
             return
         }
 
@@ -757,11 +759,11 @@ class ClientBookingReceiver : BroadcastReceiver() {
         )
     }
 
-    // Scrie ștergerea în coada de sincronizare existentă („ORG:D:”) — Flutter o
+    // Scrie ștergerea în coada de sincronizare existentă („PEN:D:”) — Flutter o
     // aplică deja complet (șterge înregistrarea, recalculează sloturile libere,
     // reprogramează notificările), fără cod Dart suplimentar.
     private fun cancelBooking(context: Context, sender: String, candidate: CancelCandidate) {
-        enqueueSyncMessage(context, candidate.boardId, "ORG:D:${candidate.syncId}")
+        enqueueSyncMessage(context, candidate.boardId, "PEN:D:${candidate.syncId}")
         // Dacă exista o alarmă de „termen de validare” (mod zile) pentru
         // această rezervare, nu mai are rost — clientul tocmai a anulat-o el
         // însuși, nu are sens să mai primească și un SMS de „anulat pentru
@@ -777,7 +779,7 @@ class ClientBookingReceiver : BroadcastReceiver() {
     }
 
     // ── Scrie programarea confirmată în coada de sincronizare existentă ─────────
-    // Reutilizează exact protocolul de sincronizare între tabele (mesaj „ORG:A:”)
+    // Reutilizează exact protocolul de sincronizare între tabele (mesaj „PEN:A:”)
     // — Flutter va prelua această „programare” la fel ca pe oricare alta primită
     // de la un dispozitiv pereche, cu logica deja existentă de merge/numerotare.
     // createdAt implicit = start, ca la comportamentul original de salon (nu
@@ -806,12 +808,12 @@ class ClientBookingReceiver : BroadcastReceiver() {
         item.put("b", true)
         if (includeStartsAt) item.put("st", start.format(ISO_SHORT))
 
-        enqueueSyncMessage(context, boardId, "ORG:A:$item")
+        enqueueSyncMessage(context, boardId, "PEN:A:$item")
         return syncId
     }
 
     // Scrie un mesaj în coada de sincronizare existentă (folosită atât pentru
-    // rezervări noi „ORG:A:”, cât și pentru anulări „ORG:D:”).
+    // rezervări noi „PEN:A:”, cât și pentru anulări „PEN:D:”).
     private fun enqueueSyncMessage(context: Context, boardId: String, msg: String) =
         SmsSyncReceiver.enqueue(context, boardId, msg)
 

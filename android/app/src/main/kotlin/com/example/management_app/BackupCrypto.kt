@@ -10,12 +10,12 @@ import javax.crypto.spec.SecretKeySpec
 import kotlin.io.encoding.Base64
 
 /**
- * Criptarea fișierelor de backup (.orgbackup v2) — logică pură, testabilă pe
+ * Criptarea fișierelor de backup (.penbackup v2) — logică pură, testabilă pe
  * JVM. Backup-ul conține numele și telefoanele clienților și ajunge pe stick
  * sau în Documents, deci nu stă în clar.
  *
  *   {
- *     "app": "organizator",
+ *     "app": "pensiune",
  *     "formatVersion": 2,
  *     "createdAt": <epoch ms>,
  *     "kdf": { "alg": "PBKDF2-HMAC-SHA256", "iterations": n, "salt": b64 },
@@ -36,7 +36,7 @@ object BackupCrypto {
     private const val SALT_BYTES = 16
     private const val IV_BYTES = 12
     private const val TAG_BITS = 128
-    private val AAD = "organizator-backup-v2".toByteArray(Charsets.UTF_8)
+    private val AAD = "pensiune-backup-v2".toByteArray(Charsets.UTF_8)
 
     class WrongPasswordException :
         Exception("Parolă greșită sau fișier modificat.")
@@ -85,7 +85,7 @@ object BackupCrypto {
 
     /** Textul backup-ului v1 din interior; [WrongPasswordException] la parolă greșită. */
     fun decrypt(content: String, password: String): String {
-        val invalid = BackupFormat.InvalidBackupException("Fișierul nu este un backup Organizator valid.")
+        val invalid = BackupFormat.InvalidBackupException("Fișierul nu este un backup Rezervări Pensiune valid.")
         val root = try { JSONObject(content) } catch (_: Exception) { throw invalid }
         if (root.optString("app") != BackupFormat.APP_ID ||
             root.optInt("formatVersion", -1) != FORMAT_VERSION

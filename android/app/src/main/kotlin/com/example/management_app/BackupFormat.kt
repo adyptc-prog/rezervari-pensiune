@@ -5,7 +5,7 @@ import org.json.JSONObject
 import java.security.MessageDigest
 
 /**
- * Formatul fișierului de backup Organizator (.orgbackup) — logică pură, fără
+ * Formatul fișierului de backup Rezervări Pensiune (.penbackup) — logică pură, fără
  * Android, testabilă pe JVM.
  *
  * Datele aplicației stau în SharedPreferences (nu în SQLite ca la Fidelio),
@@ -13,7 +13,7 @@ import java.security.MessageDigest
  * păstrat (plugin-ul Dart scrie int-urile ca Long, listele ca String etc.):
  *
  *   {
- *     "app": "organizator",
+ *     "app": "pensiune",
  *     "formatVersion": 1,
  *     "createdAt": <epoch ms>,
  *     "checksum": sha256(data),
@@ -26,11 +26,11 @@ import java.security.MessageDigest
  */
 object BackupFormat {
 
-    const val APP_ID = "organizator"
+    const val APP_ID = "pensiune"
     const val FORMAT_VERSION = 1
-    const val EXTENSION = ".orgbackup"
-    const val AUTO_PREFIX = "organizator_auto_"
-    const val MANUAL_PREFIX = "organizator_"
+    const val EXTENSION = ".penbackup"
+    const val AUTO_PREFIX = "pensiune_auto_"
+    const val MANUAL_PREFIX = "pensiune_"
 
     private const val FLUTTER_PREFIX = "flutter."
 
@@ -102,10 +102,10 @@ object BackupFormat {
         val root = try {
             JSONObject(content)
         } catch (_: Exception) {
-            throw InvalidBackupException("Fișierul nu este un backup Organizator.")
+            throw InvalidBackupException("Fișierul nu este un backup Rezervări Pensiune.")
         }
         if (root.optString("app") != APP_ID) {
-            throw InvalidBackupException("Fișierul nu este un backup Organizator.")
+            throw InvalidBackupException("Fișierul nu este un backup Rezervări Pensiune.")
         }
         val version = root.optInt("formatVersion", -1)
         if (version < 1 || version > FORMAT_VERSION) {

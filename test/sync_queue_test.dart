@@ -5,9 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:management_app/main.dart';
+import 'package:pensiune_app/main.dart';
 
-const _smsChannel = MethodChannel('organizator/sms');
+const _smsChannel = MethodChannel('pensiune/sms');
 
 // Simulează coada nativă (SmsSyncReceiver): intrări cu id, confirmate
 // individual prin ackSyncMessages.
@@ -55,7 +55,7 @@ class _FakeNativeQueue {
   }
 }
 
-String _add(String syncId, String name) => 'ORG:A:${jsonEncode({
+String _add(String syncId, String name) => 'PEN:A:${jsonEncode({
       's': syncId,
       'n': name,
       'c': '2026-10-01T10:00',
@@ -144,14 +144,14 @@ void main() {
   testWidgets('rezervarea făcută de bot e trimisă și partenerului tabelului',
       (tester) async {
     queue.add('b2', _add('aaaa', 'Rezervare bot'), origin: 'local');
-    queue.add('b2', 'ORG:D:zzzz', origin: 'local');
+    queue.add('b2', 'PEN:D:zzzz', origin: 'local');
 
     await tester.pumpWidget(const ManagementApp());
     await settle(tester);
 
     expect(queue.sent, [
       {'board': 'b2', 'message': _add('aaaa', 'Rezervare bot')},
-      {'board': 'b2', 'message': 'ORG:D:zzzz'},
+      {'board': 'b2', 'message': 'PEN:D:zzzz'},
     ]);
   });
 

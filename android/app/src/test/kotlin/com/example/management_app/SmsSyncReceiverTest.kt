@@ -23,7 +23,7 @@ class SmsSyncReceiverTest {
     private val partner = "+40722000111"
     private val codeB1 = "AAAA2222"
     private val codeB2 = "BBBB3333"
-    private val msg = """ORG:A:{"s":"abc","n":"Ion","c":"2026-10-06T10:00"}"""
+    private val msg = """PEN:A:{"s":"abc","n":"Ion","c":"2026-10-06T10:00"}"""
     private val sent = mutableListOf<Pair<String, String>>()
 
     @Before

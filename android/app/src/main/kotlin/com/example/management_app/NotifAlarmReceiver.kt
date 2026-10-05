@@ -12,7 +12,7 @@ import org.json.JSONObject
 class NotifAlarmReceiver : BroadcastReceiver() {
 
     companion object {
-        const val CHANNEL_ID = "organizator_alerts"
+        const val CHANNEL_ID = "pensiune_alerts"
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -26,7 +26,7 @@ class NotifAlarmReceiver : BroadcastReceiver() {
             val dataStr = prefs.getString("flutter.notif_alarm_$alarmId", null) ?: return
 
             val json  = JSONObject(dataStr)
-            val title = json.optString("title", "Organizator")
+            val title = json.optString("title", "Rezervări Pensiune")
             val body  = json.optString("body", "")
 
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -34,7 +34,7 @@ class NotifAlarmReceiver : BroadcastReceiver() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val channel = NotificationChannel(
                     CHANNEL_ID,
-                    "Alerte Organizator",
+                    "Alerte Rezervări Pensiune",
                     NotificationManager.IMPORTANCE_HIGH
                 ).apply { enableVibration(true) }
                 nm.createNotificationChannel(channel)

@@ -10,18 +10,18 @@ import javax.crypto.spec.SecretKeySpec
  *
  * Numărul expeditorului unui SMS poate fi falsificat, deci nu e suficient ca
  * mesajul să „vină” de la partener. Ambele telefoane cunosc un cod de
- * împerechere (introdus manual pe fiecare, per tabel); fiecare mesaj „ORG:”
+ * împerechere (introdus manual pe fiecare, per tabel); fiecare mesaj „PEN:”
  * e trimis învelit și semnat cu el:
  *
- *   ORG:S:<semnătură, 16 hex>:<mesajul original, ex. ORG:A:{...}>
+ *   PEN:S:<semnătură, 16 hex>:<mesajul original, ex. PEN:A:{...}>
  *
  * Semnătura = primii 8 octeți din HMAC-SHA256(cheie, mesaj original), cu
- * cheia = SHA-256("organizator-sync|" + cod normalizat). Mesajele fără
+ * cheia = SHA-256("pensiune-sync|" + cod normalizat). Mesajele fără
  * semnătură validă sunt respinse.
  */
 object SyncAuth {
 
-    const val SIGNED_PREFIX = "ORG:S:"
+    const val SIGNED_PREFIX = "PEN:S:"
     const val MIN_CODE_LENGTH = 8
     private const val TAG_HEX_LENGTH = 16
 
@@ -33,7 +33,7 @@ object SyncAuth {
 
     private fun key(code: String): ByteArray =
         MessageDigest.getInstance("SHA-256")
-            .digest("organizator-sync|${normalizeCode(code)}".toByteArray(Charsets.UTF_8))
+            .digest("pensiune-sync|${normalizeCode(code)}".toByteArray(Charsets.UTF_8))
 
     private fun tag(code: String, message: String): String {
         val mac = Mac.getInstance("HmacSHA256")

@@ -58,7 +58,7 @@ class ClientBookingReceiverTest {
         val end = LocalDateTime.now().plusDays(daysAhead).withHour(12).withMinute(0)
         val payload = JSONObject().put("s", syncId).put("n", client)
             .put("c", end.minusMinutes(30).format(fmt)).put("e", end.format(fmt)).put("p1", client)
-        SmsSyncReceiver.enqueue(context, "b1", "ORG:A:$payload")
+        SmsSyncReceiver.enqueue(context, "b1", "PEN:A:$payload")
     }
 
     @Test
@@ -140,8 +140,8 @@ class ClientBookingReceiverTest {
         receiver.handleMessage(context, client, "1")
         val arr = JSONArray(SmsSyncReceiver.snapshot(context))
         val msg = arr.getJSONObject(0).getString("msg")
-        assertTrue(msg.startsWith("ORG:A:"))
-        assertEquals(true, JSONObject(msg.removePrefix("ORG:A:")).getBoolean("b"))
+        assertTrue(msg.startsWith("PEN:A:"))
+        assertEquals(true, JSONObject(msg.removePrefix("PEN:A:")).getBoolean("b"))
     }
 }
 

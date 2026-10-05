@@ -22,7 +22,7 @@ interface SecretBox {
  * Google (backup_rules.xml), deci nu pleacă de pe telefon.
  */
 object KeystoreSecretBox : SecretBox {
-    private const val ALIAS = "organizator_backup_password"
+    private const val ALIAS = "pensiune_backup_password"
     private const val PROVIDER = "AndroidKeyStore"
 
     private fun key(): SecretKey {

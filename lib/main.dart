@@ -71,7 +71,7 @@ String _isoShort(DateTime dt) =>
 // prin NotifAlarmReceiver.kt — fiabil pe orice versiune Android, fără dependență
 // de flutter_local_notifications scheduling.
 class NotificationService {
-  static const _ch = MethodChannel('organizator/sms');
+  static const _ch = MethodChannel('pensiune/sms');
 
   static final _plugin = FlutterLocalNotificationsPlugin();
 
@@ -176,7 +176,7 @@ bool get _isAndroid => debugSimulateAndroid ?? Platform.isAndroid;
 
 // ─── Serviciu SMS (alarme programate via Kotlin AlarmManager) ─────────────────
 class SmsService {
-  static const _ch = MethodChannel('organizator/sms');
+  static const _ch = MethodChannel('pensiune/sms');
 
   static bool get isAndroid => _isAndroid;
 
@@ -361,7 +361,7 @@ class SmsService {
 // fel ca restul alarmelor din aplicație (funcționează chiar dacă aplicația nu
 // se deschide deloc în acest interval).
 class ValidationService {
-  static const _ch = MethodChannel('organizator/sms');
+  static const _ch = MethodChannel('pensiune/sms');
 
   // Reproduce exact algoritmul java.lang.String.hashCode() — folosit ca ID de
   // alarmă, ca același syncId să dea mereu același ID indiferent dacă
@@ -413,17 +413,17 @@ class ValidationService {
 // ─── Serviciu sincronizare bidirecțională prin SMS ────────────────────────────
 //
 // Protocol:
-//   ORG:A:{json}  — item adăugat
-//   ORG:U:{json}  — item actualizat
-//   ORG:D:{syncId} — item șters
-//   ORG:I:{json}  — item din sincronizare inițială (bulk)
-//   ORG:Z:        — sfârșitul sincronizării inițiale
+//   PEN:A:{json}  — item adăugat
+//   PEN:U:{json}  — item actualizat
+//   PEN:D:{syncId} — item șters
+//   PEN:I:{json}  — item din sincronizare inițială (bulk)
+//   PEN:Z:        — sfârșitul sincronizării inițiale
 //
 // Câmpuri JSON compact: s=syncId, n=name, d=description, c=createdAt,
 //   e=expiresAt, w=warningAt, p1/p2/p3=phoneNumbers, st=startsAt,
 //   v=validated, b=rezervare prin bot (viaBot)
 class SyncService {
-  static const _ch = MethodChannel('organizator/sms');
+  static const _ch = MethodChannel('pensiune/sms');
   static String? _partnerPhone;
   static String? _pairingCode;
   static String  _boardId = '';
@@ -515,21 +515,21 @@ class SyncService {
   // Trimite toate înregistrările la sincronizarea inițială
   static Future<void> sendInitialSync(List<Item> items) async {
     for (final item in items) {
-      await _send('ORG:I:${jsonEncode(item.toSyncJson())}');
+      await _send('PEN:I:${jsonEncode(item.toSyncJson())}');
       // Pauză între SMS-uri pentru a evita limitele operatorului
       await Future<void>.delayed(const Duration(milliseconds: 1500));
     }
-    await _send('ORG:Z:');
+    await _send('PEN:Z:');
   }
 
   static Future<void> sendAdd(Item item) =>
-      _send('ORG:A:${jsonEncode(item.toSyncJson())}');
+      _send('PEN:A:${jsonEncode(item.toSyncJson())}');
 
   static Future<void> sendUpdate(Item item) =>
-      _send('ORG:U:${jsonEncode(item.toSyncJson())}');
+      _send('PEN:U:${jsonEncode(item.toSyncJson())}');
 
   static Future<void> sendDelete(String syncId) =>
-      _send('ORG:D:$syncId');
+      _send('PEN:D:$syncId');
 
   // Licența cumpărată merge pe ambele telefoane sincronizate. La împerechere,
   // telefonul cu licență o trimite („L”), iar cel fără licență o cere („R”) —
@@ -540,7 +540,7 @@ class SyncService {
     if (!isActive) return;
     // Telefonul cu licență o trimite (dacă are voie); cel fără o cere.
     final status = await LicenseService.shareWithBoard(_boardId);
-    if (status == 'no_license') await _send('ORG:R:');
+    if (status == 'no_license') await _send('PEN:R:');
   }
 
   // Tabelele cu partener și cod de împerechere, câte unul per număr de
@@ -975,7 +975,7 @@ class ManagementApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Organizator',
+      title: 'Rezervări Pensiune',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
@@ -1039,7 +1039,7 @@ class _ManagementPageState extends State<ManagementPage>
   // (Scaffold-ul cu spinner se construiește imediat) — nu explodăm în acel caz.
   Board get _activeBoard => _boards.firstWhere(
       (b) => b.id == _activeBoardId,
-      orElse: () => const Board(id: '', name: 'Organizator'));
+      orElse: () => const Board(id: '', name: 'Rezervări Pensiune'));
   int get _activeBoardIndex => _boards.indexWhere((b) => b.id == _activeBoardId);
 
   @override
@@ -1502,8 +1502,8 @@ class _ManagementPageState extends State<ManagementPage>
     final removed = <Item>[];
     for (final msg in messages) {
       try {
-        if (msg.startsWith('ORG:A:') || msg.startsWith('ORG:I:')) {
-          final prefix = msg.startsWith('ORG:A:') ? 'ORG:A:' : 'ORG:I:';
+        if (msg.startsWith('PEN:A:') || msg.startsWith('PEN:I:')) {
+          final prefix = msg.startsWith('PEN:A:') ? 'PEN:A:' : 'PEN:I:';
           final j = jsonDecode(msg.substring(prefix.length)) as Map<String, dynamic>;
           final incoming = Item.fromSyncJson(j);
           final idx = items.indexWhere((e) => e.syncId == incoming.syncId);
@@ -1513,7 +1513,7 @@ class _ManagementPageState extends State<ManagementPage>
             items[idx] = incoming.copyWith(number: items[idx].number);
           }
           changed = true;
-        } else if (msg.startsWith('ORG:U:')) {
+        } else if (msg.startsWith('PEN:U:')) {
           final j = jsonDecode(msg.substring(6)) as Map<String, dynamic>;
           final incoming = Item.fromSyncJson(j);
           final idx = items.indexWhere((e) => e.syncId == incoming.syncId);
@@ -1524,7 +1524,7 @@ class _ManagementPageState extends State<ManagementPage>
             items.add(incoming.copyWith(number: nextNumber++));
           }
           changed = true;
-        } else if (msg.startsWith('ORG:D:')) {
+        } else if (msg.startsWith('PEN:D:')) {
           final syncId = msg.substring(6).trim();
           final idx = items.indexWhere((e) => e.syncId == syncId);
           if (idx != -1) {
@@ -1534,7 +1534,7 @@ class _ManagementPageState extends State<ManagementPage>
             changed = true;
           }
         }
-        // ORG:Z: (end of initial sync) — ignorat, nu necesită acțiune
+        // PEN:Z: (end of initial sync) — ignorat, nu necesită acțiune
       } catch (_) {
         // SMS corupt sau format necunoscut — ignorat
       }
@@ -1710,7 +1710,7 @@ class _ManagementPageState extends State<ManagementPage>
               ),
               const SizedBox(height: 12),
               const Text(
-                'Cumpără o licență pe voltacademy.app/organizator.html folosind codul de instalare de mai jos, apoi importă fișierul descărcat:',
+                'Cumpără o licență pe voltacademy.app/pensiune.html folosind codul de instalare de mai jos, apoi importă fișierul descărcat:',
                 style: TextStyle(fontSize: 13),
               ),
               const SizedBox(height: 8),
@@ -3340,14 +3340,22 @@ class _ManagementPageState extends State<ManagementPage>
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Organizator',
+              // Numele aplicației e lung — pe ecrane înguste se scurtează cu „…”
+              // în loc să iasă din bara de sus.
+              const Text('Rezervări Pensiune',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 12, color: Colors.white70)),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(_activeBoard.name,
-                      style: const TextStyle(
-                          fontSize: 18, fontWeight: FontWeight.bold)),
+                  Flexible(
+                    child: Text(_activeBoard.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
+                  ),
                   const Icon(Icons.arrow_drop_down, color: Colors.white70),
                 ],
               ),
@@ -3964,7 +3972,7 @@ class _ManagementPageState extends State<ManagementPage>
         List<ReportEntry> all, String period, int actCnt, int delCnt) {
       final buf = StringBuffer();
       buf.writeln('═══════════════════════════════════════');
-      buf.writeln('         RAPORT ORGANIZATOR');
+      buf.writeln('         RAPORT REZERVĂRI PENSIUNE');
       buf.writeln('═══════════════════════════════════════');
       buf.writeln('Perioadă : $period');
       buf.writeln('Total    : ${all.length} înregistrări');
@@ -4150,7 +4158,7 @@ class _ManagementPageState extends State<ManagementPage>
             onPressed: () {
               final text = buildExportText(
                   all, period, activeItems.length, deletedItems.length);
-              Share.share(text, subject: 'Raport Organizator');
+              Share.share(text, subject: 'Raport Rezervări Pensiune');
             },
           ),
           FilledButton(

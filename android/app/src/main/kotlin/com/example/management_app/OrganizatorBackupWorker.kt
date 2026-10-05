@@ -31,7 +31,7 @@ class OrganizatorBackupWorker(
     }
 
     companion object {
-        private const val WORK_NAME = "organizator_daily_backup"
+        private const val WORK_NAME = "pensiune_daily_backup"
 
         fun schedule(context: Context) {
             val now = Calendar.getInstance()

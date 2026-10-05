@@ -5,9 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:management_app/main.dart';
+import 'package:pensiune_app/main.dart';
 
-const _smsChannel = MethodChannel('organizator/sms');
+const _smsChannel = MethodChannel('pensiune/sms');
 
 Map<String, Object?> _item(int number, String syncId, String phone) => {
       'syncId': syncId,
@@ -106,7 +106,7 @@ void main() {
   testWidgets(
       'ultima înregistrare ștearsă prin sincronizare nu mai trimite SMS/notificări',
       (tester) async {
-    queue.add({'id': 'q1', 'board': 'b1', 'msg': 'ORG:D:cccc'});
+    queue.add({'id': 'q1', 'board': 'b1', 'msg': 'PEN:D:cccc'});
 
     await tester.pumpWidget(const ManagementApp());
     await settle(tester);
@@ -130,7 +130,7 @@ void main() {
 
   testWidgets('reprogramarea nu e anulată de propria anulare (ordinea contează)',
       (tester) async {
-    queue.add({'id': 'q1', 'board': 'b1', 'msg': 'ORG:D:bbbb'});
+    queue.add({'id': 'q1', 'board': 'b1', 'msg': 'PEN:D:bbbb'});
 
     await tester.pumpWidget(const ManagementApp());
     await settle(tester);
@@ -148,7 +148,7 @@ void main() {
 
   testWidgets('rezervarea prin bot nu primește SMS „EXPIRAT”, cea manuală da',
       (tester) async {
-    String add(String syncId, {bool bot = false}) => 'ORG:A:${jsonEncode({
+    String add(String syncId, {bool bot = false}) => 'PEN:A:${jsonEncode({
           's': syncId,
           'n': '+40755555555',
           'c': '2030-01-05T10:00',

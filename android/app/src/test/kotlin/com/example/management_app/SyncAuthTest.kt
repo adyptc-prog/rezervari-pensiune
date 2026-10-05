@@ -9,12 +9,12 @@ import org.junit.Test
 class SyncAuthTest {
 
     private val code = "K7QM-2XPA"
-    private val msg = """ORG:A:{"s":"abc","n":"Ion"}"""
+    private val msg = """PEN:A:{"s":"abc","n":"Ion"}"""
 
     @Test
     fun `mesajul semnat e acceptat cu acelasi cod`() {
         val signed = SyncAuth.sign(code, msg)
-        assertTrue(signed.startsWith("ORG:S:"))
+        assertTrue(signed.startsWith("PEN:S:"))
         assertEquals(msg, SyncAuth.verify(code, signed))
     }
 
@@ -38,8 +38,8 @@ class SyncAuthTest {
     @Test
     fun `mesajele nesemnate sau trunchiate sunt respinse`() {
         assertNull(SyncAuth.verify(code, msg))
-        assertNull(SyncAuth.verify(code, "ORG:S:abc:$msg"))
-        assertNull(SyncAuth.verify(code, "ORG:S:"))
+        assertNull(SyncAuth.verify(code, "PEN:S:abc:$msg"))
+        assertNull(SyncAuth.verify(code, "PEN:S:"))
         assertNull(SyncAuth.verify(null, SyncAuth.sign(code, msg)))
     }
 

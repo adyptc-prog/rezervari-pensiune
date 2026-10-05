@@ -35,15 +35,16 @@ object LicenseStore {
     const val KEY_SHARE_PARTNER = "license_share_partner"
     const val KEY_SHARE_LICENSE_ID = "license_share_license_id"
 
-    // Cheia publică RSA-2048 (DER/X.509, base64) — corespunde tools/private.pem
+    // Cheia publică RSA-2048 a produsului „Rezervări Pensiune” (diferită de
+    // Organizator) — corespunde tools/private.pem.
     const val PUBLIC_KEY_B64 =
-        "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6LMDi/tUuBHqLag6NHTw" +
-        "WNQfS3Forlq5IVkSDtjoNa/Q+2N+hlfSdLJyNsetsZhBpDhvpl/BBbvlMT+CZsyh" +
-        "xnmVVZ1w0bd6JUftEYAnK6/aaLW7qaRxQ0Gh1LT6YDKpJecd5ozWM7hgNTXoflRl" +
-        "PgjmdxiQJcZHOuRV4crPOYDNPQbgbWnHVMor4MyOX9bLzHOdyVjO/SyDNR2eMoLP" +
-        "TtoHDI1Lhj/2r3T6tt/BE+mC8see5GCq2Jzb31IgFpw0gPAK495R3P3b3URbCCkt" +
-        "yx23dfww5NNWiI4fRp/PyFMS1lvqprQZf8gLWXqnKmmih+2kTNE6ukHcO7pjfKBD" +
-        "UwIDAQAB"
+        "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAw8qB5prlJuqvSUDF2yjI" +
+        "ekO9Fqtk1CVZfiuaPbJfBzql/6vKw3QRhdlEVTqNL5oHUTwsz++CsWPzYEUF0V/n" +
+        "MXEED0w+/kmasMTzrkxQLnxIX20Vkm1mvM7K+tqqJHIlil30Wey0TVY9FBkbtKJD" +
+        "QHDW/uMUQbTg3caRL5et1RKQPPFmzTY+XdgZnT1kz5tlpa4Gq89Nm2huYq2AJaIt" +
+        "kVaHnboJl/pROwSYDVnDAIqU2FdKZpw8Mea8YiHlChNp6v3BvkoxaOUe9lu/bqTu" +
+        "gdCvcIMEfPAl8n3XZQxwslBRNju7sme4ilnlr9LvFSBbR7ecZZZVxLOsbmt9D3re" +
+        "DQIDAQAB"
 
     private val productionVerifier by lazy {
         LicenseVerifier(Base64.decode(PUBLIC_KEY_B64, Base64.DEFAULT)) {
@@ -64,7 +65,7 @@ object LicenseStore {
         val prefs = prefs(context)
         val existing = prefs.getString(KEY_BUSINESS_ID, null)
         if (existing != null) return existing
-        val fresh = "organizator-${System.currentTimeMillis()}"
+        val fresh = "pensiune-${System.currentTimeMillis()}"
         prefs.edit().putString(KEY_BUSINESS_ID, fresh).apply()
         return fresh
     }

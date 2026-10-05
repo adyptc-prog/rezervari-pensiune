@@ -81,7 +81,7 @@ class BackupPasswordNeeded implements Exception {
 // Backup-ul (manual + automat zilnic) și restaurarea sunt implementate nativ
 // (BackupManager.kt), ca backup-ul automat să ruleze și cu aplicația închisă.
 class BackupService {
-  static const _ch = MethodChannel('organizator/backup');
+  static const _ch = MethodChannel('pensiune/backup');
 
   @visibleForTesting
   static bool? debugIsAndroid;
