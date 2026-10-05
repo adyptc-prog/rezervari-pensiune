@@ -16,11 +16,9 @@ import java.util.concurrent.Executors
 /**
  * Bot de rezervări prin SMS pentru clienți.
  *
- *   „liber” / „liber <tabel>”  → pe tabele „interval” (salon): răspunde cu
- *                                 până la 6 ore libere, numerotate. Pe tabele
- *                                 „zile” (pensiune): întreabă mai întâi câte
- *                                 nopți, apoi oferă date disponibile.
- *   „next”                     → următoarea pagină de ore/date libere
+ *   „liber” / „liber <tabel>”  → întreabă câte nopți, apoi oferă până la 6
+ *                                 perioade disponibile, numerotate
+ *   „next”                     → următoarea pagină de date libere
  *   un număr (ex. „2”)         → înseamnă, în ordinea priorității (cea mai
  *                                 recentă interacțiune câștigă): număr de
  *                                 nopți cerut, alegere dintr-o ofertă de
@@ -33,7 +31,7 @@ import java.util.concurrent.Executors
  *                                 alegerea dintr-o listă
  *
  * Rulează independent de Flutter (ca SmsAlarmReceiver) — citește direct din
- * SharedPreferences prin BookingSettings/FreeSlotCalculator/DayRangeCalculator,
+ * SharedPreferences prin BookingSettings/DayRangeCalculator,
  * ca să răspundă instant chiar dacă aplicația e complet închisă. Rezervarea
  * confirmată/anulată e scrisă în coada de sincronizare existentă ca mesaj
  * „PEN:A:”/„PEN:D:” — Flutter o preia automat la următoarea deschidere, cu
@@ -53,14 +51,11 @@ class ClientBookingReceiver : BroadcastReceiver() {
         private const val CANCEL_OFFERS_KEY = "cancelOffers"
         private const val RATE_KEY          = "rateLimits"
         private const val CANCEL_OFFER_TTL_MIN = 10L
-        // Stare „aștept răspuns cu numărul de nopți” — tabele în modul „zile”,
-        // imediat după „liber”. TTL scurt: e un singur pas, nu o navigare.
+        // Stare „aștept răspuns cu numărul de nopți” — imediat după „liber”. TTL scurt: e un singur pas, nu o navigare.
         private const val NIGHTS_OFFERS_KEY = "nightsOffers"
         private const val NIGHTS_OFFER_TTL_MIN = 5L
         private const val PAGE_SIZE       = 6
-        private const val HORIZON_DAYS    = 14
-        // Orizont mai lung pentru tabelele „zile” (pensiune) — 14 zile e prea
-        // puțin pentru un sejur planificat cu mult timp înainte.
+        // Un sejur se planifică de obicei cu mult timp înainte.
         private const val ZILE_HORIZON_DAYS = 90
         private const val MAX_TOTAL_SLOTS = 200
 
@@ -181,7 +176,7 @@ class ClientBookingReceiver : BroadcastReceiver() {
             numberMatch != null -> {
                 // Un răspuns numeric poate însemna trei lucruri diferite, în
                 // funcție de ce a întrebat ultimul mesaj trimis clientului:
-                // câte nopți vrea (tabel „zile”, imediat după „liber”), ce
+                // câte nopți vrea (imediat după „liber”), ce
                 // opțiune de rezervare alege, sau ce programare alege să
                 // anuleze. Când mai multe sunt active simultan, câștigă cea
                 // mai recentă interacțiune.
@@ -280,18 +275,14 @@ class ClientBookingReceiver : BroadcastReceiver() {
         return o
     }
 
-    private fun setOffer(
-        context: Context, senderDigits: String, boardId: String, offset: Int, nights: Int? = null,
-    ) {
+    private fun setOffer(context: Context, senderDigits: String, boardId: String, offset: Int, nights: Int) {
         val offers = loadOffers(context)
         val o = JSONObject()
         o.put("board", boardId)
         o.put("offset", offset)
         o.put("ts", System.currentTimeMillis())
-        // Prezența cheii „nights” marchează oferta ca fiind pentru un tabel
-        // „zile” — folosită la paginare (NEXT) și la confirmare, ca să știm ce
-        // algoritm de calcul sloturi și ce format de mesaj să reutilizăm.
-        if (nights != null) o.put("nights", nights)
+        // Numărul de nopți cerut — refolosit la paginare (NEXT) și la confirmare.
+        o.put("nights", nights)
         offers.put(senderDigits, o)
         saveOffers(context, offers)
     }
@@ -337,7 +328,7 @@ class ClientBookingReceiver : BroadcastReceiver() {
         saveCancelOffers(context, offers)
     }
 
-    // ── Stocare „aștept număr de nopți” (tabele mod „zile”) ──────────────────────
+    // ── Stocare „aștept număr de nopți” ──────────────────────
     private fun loadNightsOffers(context: Context): JSONObject = try {
         JSONObject(bookingPrefs(context).getString(NIGHTS_OFFERS_KEY, "{}") ?: "{}")
     } catch (_: Exception) {
@@ -387,7 +378,7 @@ class ClientBookingReceiver : BroadcastReceiver() {
         }
 
         val settings = BookingSettings.loadSettings(context, board.id)
-        Diag.i("startOffer: board=${board.id} settings.enabled=${settings.enabled} mode=${settings.mode}")
+        Diag.i("startOffer: board=${board.id} settings.enabled=${settings.enabled}")
         if (!settings.enabled) {
             sendSms(context, sender, "Rezervările prin SMS nu sunt active pentru ${board.name}.")
             return
@@ -395,13 +386,8 @@ class ClientBookingReceiver : BroadcastReceiver() {
 
         if (bookingLimitReached(context, sender, senderDigits)) return
 
-        if (settings.mode == BoardMode.ZILE) {
-            setNightsOffer(context, senderDigits, board.id)
-            sendSms(context, sender, "Câte nopți? Răspunde cu un număr (1-30).")
-            return
-        }
-
-        sendPage(context, sender, senderDigits, board, settings, offset = 0, isFirstPage = true)
+        setNightsOffer(context, senderDigits, board.id)
+        sendSms(context, sender, "Câte nopți? Răspunde cu un număr (1-30).")
     }
 
     // ── Confirmare număr de nopți → prima pagină de sejururi disponibile ────────
@@ -427,7 +413,7 @@ class ClientBookingReceiver : BroadcastReceiver() {
     private fun continueOffer(context: Context, sender: String, senderDigits: String) {
         val offer = getOffer(context, senderDigits)
         if (offer == null) {
-            sendSms(context, sender, "Nu am nicio căutare activă. Scrie LIBER pentru a vedea orele libere.")
+            sendSms(context, sender, "Nu am nicio căutare activă. Scrie LIBER pentru a rezerva un sejur.")
             return
         }
         val boardId = offer.optString("board", "")
@@ -442,66 +428,13 @@ class ClientBookingReceiver : BroadcastReceiver() {
             return
         }
         val nextOffset = offer.optInt("offset", 0) + PAGE_SIZE
-        if (offer.has("nights")) {
-            sendZilePage(context, sender, senderDigits, board, settings,
-                offer.optInt("nights", 1), offset = nextOffset, isFirstPage = false)
-        } else {
-            sendPage(context, sender, senderDigits, board, settings, offset = nextOffset, isFirstPage = false)
-        }
-    }
-
-    private fun sendPage(
-        context: Context,
-        sender: String,
-        senderDigits: String,
-        board: BoardInfo,
-        settings: BoardBookingSettings,
-        offset: Int,
-        isFirstPage: Boolean,
-    ) {
-        val page = computePage(context, board, settings, offset)
-
-        if (page.slots.isEmpty()) {
-            val msg = if (isFirstPage) {
-                "Nu sunt ore libere în perioada verificată pentru ${board.name}."
-            } else {
-                "Nu mai sunt alte ore libere pentru ${board.name}. Scrie LIBER pentru a relua căutarea."
-            }
-            sendSms(context, sender, msg)
-            clearOffer(context, senderDigits)
-            return
-        }
-
-        setOffer(context, senderDigits, board.id, offset)
-
-        val today = LocalDateTime.now().toLocalDate()
-        val lines = page.slots.mapIndexed { i, slot ->
-            val dateSuffix = if (slot.start.toLocalDate() != today) " (${slot.start.format(DISPLAY_DATE_FMT)})" else ""
-            "${i + 1}. ${slot.start.format(DISPLAY_TIME_FMT)}-${slot.end.format(DISPLAY_TIME_FMT)}$dateSuffix"
-        }
-        val footer = "Răspunde cu numărul opțiunii pentru rezervare" + (if (page.hasMore) ", sau NEXT pentru alte ore." else ".")
-        sendSms(context, sender, "Ore libere ${board.name}:\n${lines.joinToString("\n")}\n$footer")
+        sendZilePage(context, sender, senderDigits, board, settings,
+            offer.optInt("nights", 1), offset = nextOffset, isFirstPage = false)
     }
 
     private class Page(val slots: List<FreeSlot>, val hasMore: Boolean)
 
-    // Cerem un slot „în plus” față de pagina curentă (peekTarget), doar ca să
-    // detectăm dacă mai există ore libere după cele afișate — fără asta,
-    // FreeSlotCalculator s-ar opri exact la finalul paginii și nu am putea ști
-    // niciodată dacă „NEXT” chiar mai aduce ceva.
-    private fun computePage(context: Context, board: BoardInfo, settings: BoardBookingSettings, offset: Int): Page {
-        val busy = BookingSettings.loadBusyIntervals(context, board.id, settings.durationMin)
-        val peekTarget = minOf(offset + PAGE_SIZE + 1, MAX_TOTAL_SLOTS)
-        val all = FreeSlotCalculator.compute(
-            busy, settings, LocalDateTime.now(), HORIZON_DAYS,
-            maxResults = peekTarget,
-        )
-        val slots = if (offset < all.size) all.subList(offset, minOf(offset + PAGE_SIZE, all.size)) else emptyList()
-        val hasMore = all.size > offset + slots.size
-        return Page(slots, hasMore)
-    }
-
-    // ── Pagină de sejururi disponibile (tabele „zile”) ──────────────────────────
+    // ── Pagină de sejururi disponibile ──────────────────────────
     private fun sendZilePage(
         context: Context,
         sender: String,
@@ -535,8 +468,8 @@ class ClientBookingReceiver : BroadcastReceiver() {
         sendSms(context, sender, "Disponibil $nights $nightsWord la ${board.name}:\n${lines.joinToString("\n")}\n$footer")
     }
 
-    // Aceeași idee de „peek +1” ca la computePage, ca să știm dacă NEXT mai
-    // aduce ceva.
+    // Cerem o perioadă „în plus” față de pagina curentă (peekTarget), doar ca
+    // să detectăm dacă NEXT mai aduce ceva.
     private fun computeZilePage(
         context: Context, board: BoardInfo, settings: BoardBookingSettings, nights: Int, offset: Int,
     ): Page {
@@ -555,7 +488,7 @@ class ClientBookingReceiver : BroadcastReceiver() {
     private fun confirmOffer(context: Context, sender: String, senderDigits: String, choice: Int) {
         val offer = getOffer(context, senderDigits)
         if (offer == null) {
-            sendSms(context, sender, "Nu am nicio ofertă activă pentru tine. Scrie LIBER pentru a vedea orele libere.")
+            sendSms(context, sender, "Nu am nicio ofertă activă pentru tine. Scrie LIBER pentru a rezerva un sejur.")
             return
         }
         val boardId = offer.optString("board", "")
@@ -571,62 +504,10 @@ class ClientBookingReceiver : BroadcastReceiver() {
             return
         }
 
-        // Prezența cheii „nights” în ofertă marchează un tabel „zile” — alt
-        // algoritm de calcul, alt format de confirmare, dar același mecanism
-        // de ofertă/paginare/confirmare de mai jos.
-        if (offer.has("nights")) {
-            val nights = offer.optInt("nights", 1)
-            val page = computeZilePage(context, board, settings, nights, offset)
-            if (choice < 1 || choice > page.slots.size) {
-                sendSms(
-                    context, sender,
-                    "Opțiune invalidă sau expirată. Răspunde cu un număr din ultimul mesaj primit, " +
-                        "sau scrie LIBER pentru o căutare nouă."
-                )
-                return
-            }
-            val slot = page.slots[choice - 1]
-            clearOffer(context, senderDigits)
-            val bookingCreatedAt = LocalDateTime.now()
-            val syncId = enqueueBooking(
-                context, board.id, sender, slot.start, slot.end,
-                createdAt = bookingCreatedAt, includeStartsAt = true,
-            )
-
-            // Termen de 24h pentru validarea plății — programat nativ (nu prin
-            // Flutter), ca să funcționeze chiar dacă aplicația nu se deschide
-            // deloc în acest interval. Dacă rezervarea nu e validată din
-            // aplicație până atunci, ValidationDeadlineReceiver o anulează.
-            val alarmId = AlarmScheduler.validationAlarmId(syncId)
-            context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
-                .edit()
-                .putString(
-                    "flutter.validation_alarm_$alarmId",
-                    JSONObject().put("board", board.id).put("sync", syncId).toString(),
-                )
-                .apply()
-            AlarmScheduler.scheduleValidationAlarm(
-                context, alarmId, bookingCreatedAt.plusHours(24)
-                    .atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),
-            )
-
-            val nightsWord = if (nights == 1) "noapte" else "nopți"
-            val ibanLine = if (settings.iban.isNotBlank()) " în contul ${settings.iban}" else ""
-            sendSms(
-                context, sender,
-                "Rezervarea ta la ${board.name}, ${slot.start.format(DISPLAY_DATE_FMT)} → " +
-                    "${slot.end.format(DISPLAY_DATE_FMT)} ($nights $nightsWord), a fost salvată. " +
-                    "Achită în maxim 24 de ore$ibanLine, altfel rezervarea va fi anulată automat. " +
-                    "Te anunțăm prin SMS după confirmarea plății."
-            )
-            return
-        }
-
-        // Recalculăm oferta curentă din nou (nu memorăm sloturile în sine), ca să
-        // reflectăm orice schimbare de la ultimul mesaj — inclusiv o eventuală
-        // rezervare făcută între timp de alt client, pe același interval.
-        val page = computePage(context, board, settings, offset)
-
+        // Recalculăm pagina (nu memorăm perioadele în sine), ca să reflectăm
+        // orice rezervare făcută între timp de alt client.
+        val nights = offer.optInt("nights", 1)
+        val page = computeZilePage(context, board, settings, nights, offset)
         if (choice < 1 || choice > page.slots.size) {
             sendSms(
                 context, sender,
@@ -635,17 +516,39 @@ class ClientBookingReceiver : BroadcastReceiver() {
             )
             return
         }
-
         val slot = page.slots[choice - 1]
         clearOffer(context, senderDigits)
-        enqueueBooking(context, board.id, sender, slot.start, slot.end)
+        val bookingCreatedAt = LocalDateTime.now()
+        val syncId = enqueueBooking(
+            context, board.id, sender, slot.start, slot.end,
+            createdAt = bookingCreatedAt,
+        )
 
-        val dateSuffix = if (slot.start.toLocalDate() != LocalDateTime.now().toLocalDate())
-            " (${slot.start.format(DISPLAY_DATE_FMT)})" else ""
+        // Termen de 24h pentru validarea plății — programat nativ (nu prin
+        // Flutter), ca să funcționeze chiar dacă aplicația nu se deschide
+        // deloc în acest interval. Dacă rezervarea nu e validată din
+        // aplicație până atunci, ValidationDeadlineReceiver o anulează.
+        val alarmId = AlarmScheduler.validationAlarmId(syncId)
+        context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+            .edit()
+            .putString(
+                "flutter.validation_alarm_$alarmId",
+                JSONObject().put("board", board.id).put("sync", syncId).toString(),
+            )
+            .apply()
+        AlarmScheduler.scheduleValidationAlarm(
+            context, alarmId, bookingCreatedAt.plusHours(24)
+                .atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),
+        )
+
+        val nightsWord = if (nights == 1) "noapte" else "nopți"
+        val ibanLine = if (settings.iban.isNotBlank()) " în contul ${settings.iban}" else ""
         sendSms(
             context, sender,
-            "Programarea ta la ${board.name} pe ${slot.start.format(DISPLAY_TIME_FMT)}-" +
-                "${slot.end.format(DISPLAY_TIME_FMT)}$dateSuffix a fost înregistrată. Te așteptăm!"
+            "Rezervarea ta la ${board.name}, ${slot.start.format(DISPLAY_DATE_FMT)} → " +
+                "${slot.end.format(DISPLAY_DATE_FMT)} ($nights $nightsWord), a fost salvată. " +
+                "Achită în maxim 24 de ore$ibanLine, altfel rezervarea va fi anulată automat. " +
+                "Te anunțăm prin SMS după confirmarea plății."
         )
     }
 
@@ -679,23 +582,13 @@ class ClientBookingReceiver : BroadcastReceiver() {
         val now = LocalDateTime.now()
         val result = mutableListOf<CancelCandidate>()
         for (board in boards) {
-            val settings = BookingSettings.loadSettings(context, board.id)
             val items = BookingSettings.loadBookedItems(context, board.id)
             for (item in items) {
                 val end = item.expiresAt ?: continue
                 if (end.isBefore(now)) continue
                 if (!phoneMatches(item.phones, senderDigits)) continue
-                val label: String
-                val start: LocalDateTime
-                if (settings.mode == BoardMode.ZILE) {
-                    start = item.startsAt ?: end.minusDays(1)
-                    label = "${board.name} ${start.format(DISPLAY_DATE_FMT)} → ${end.format(DISPLAY_DATE_FMT)}"
-                } else {
-                    start = end.minusMinutes(settings.durationMin.toLong())
-                    val dateSuffix = if (start.toLocalDate() != now.toLocalDate())
-                        " (${start.format(DISPLAY_DATE_FMT)})" else ""
-                    label = "${board.name} ${start.format(DISPLAY_TIME_FMT)}-${end.format(DISPLAY_TIME_FMT)}$dateSuffix"
-                }
+                val start = item.startsAt ?: end.minusDays(1)
+                val label = "${board.name} ${start.format(DISPLAY_DATE_FMT)} → ${end.format(DISPLAY_DATE_FMT)}"
                 result.add(CancelCandidate(board.id, item.syncId, label, start))
             }
         }
@@ -764,7 +657,7 @@ class ClientBookingReceiver : BroadcastReceiver() {
     // reprogramează notificările), fără cod Dart suplimentar.
     private fun cancelBooking(context: Context, sender: String, candidate: CancelCandidate) {
         enqueueSyncMessage(context, candidate.boardId, "PEN:D:${candidate.syncId}")
-        // Dacă exista o alarmă de „termen de validare” (mod zile) pentru
+        // Dacă exista o alarmă de „termen de validare” pentru
         // această rezervare, nu mai are rost — clientul tocmai a anulat-o el
         // însuși, nu are sens să mai primească și un SMS de „anulat pentru
         // neplată” peste câteva ore.
@@ -782,19 +675,13 @@ class ClientBookingReceiver : BroadcastReceiver() {
     // Reutilizează exact protocolul de sincronizare între tabele (mesaj „PEN:A:”)
     // — Flutter va prelua această „programare” la fel ca pe oricare alta primită
     // de la un dispozitiv pereche, cu logica deja existentă de merge/numerotare.
-    // createdAt implicit = start, ca la comportamentul original de salon (nu
-    // există alt câmp care să reprezinte „ora programării” în formatul compact
-    // de sincronizare). Pe tabelele „zile”, apelantul trece createdAt = acum
-    // (data reală de creare a rezervării) și includeStartsAt = true, pentru că
-    // acolo `start` are propriul câmp dedicat („st” = check-in).
-    // Întoarce syncId-ul generat, ca apelantul (ex. confirmOffer, pentru tabele
-    // „zile”) să poată programa alarma de termen de validare pentru exact
-    // această rezervare.
+    // createdAt = acum (de la el curge termenul de plată de 24h); start are
+    // propriul câmp („st” = check-in). Întoarce syncId-ul generat, ca
+    // apelantul să programeze termenul de validare pentru exact această
+    // rezervare.
     private fun enqueueBooking(
         context: Context, boardId: String, sender: String,
-        start: LocalDateTime, end: LocalDateTime,
-        createdAt: LocalDateTime = start,
-        includeStartsAt: Boolean = false,
+        start: LocalDateTime, end: LocalDateTime, createdAt: LocalDateTime,
     ): String {
         val syncId = generateSyncId()
         val item = JSONObject()
@@ -806,7 +693,7 @@ class ClientBookingReceiver : BroadcastReceiver() {
         // Rezervare făcută de client prin bot: telefonul e al clientului, nu
         // un destinatar de alerte — fără SMS „EXPIRAT” la final.
         item.put("b", true)
-        if (includeStartsAt) item.put("st", start.format(ISO_SHORT))
+        item.put("st", start.format(ISO_SHORT))
 
         enqueueSyncMessage(context, boardId, "PEN:A:$item")
         return syncId

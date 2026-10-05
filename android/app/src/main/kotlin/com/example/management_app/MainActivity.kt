@@ -193,7 +193,7 @@ class MainActivity : FlutterActivity() {
                     "computeFreeSlots" -> {
                         val boardId = call.argument<String>("boardId")
                             ?: run { result.error("ARG", "missing boardId", null); return@setMethodCallHandler }
-                        val horizonDays = call.argument<Int>("horizonDays") ?: 14
+                        val horizonDays = call.argument<Int>("horizonDays") ?: 90
                         val maxResults  = call.argument<Int>("maxResults") ?: 200
                         val nights      = call.argument<Int>("nights")
                         result.success(computeFreeSlotsJson(boardId, horizonDays, maxResults, nights))
@@ -393,17 +393,10 @@ class MainActivity : FlutterActivity() {
     private fun computeFreeSlotsJson(boardId: String, horizonDays: Int, maxResults: Int, nights: Int?): String {
         return try {
             val settings = BookingSettings.loadSettings(this, boardId)
-            val slots = if (settings.mode == BoardMode.ZILE) {
-                val busy = BookingSettings.loadZileBusyRanges(this, boardId)
-                DayRangeCalculator.compute(
-                    busy, settings, java.time.LocalDateTime.now(), horizonDays, nights ?: 1, maxResults
-                )
-            } else {
-                val busy = BookingSettings.loadBusyIntervals(this, boardId, settings.durationMin)
-                FreeSlotCalculator.compute(
-                    busy, settings, java.time.LocalDateTime.now(), horizonDays, maxResults
-                )
-            }
+            val busy = BookingSettings.loadZileBusyRanges(this, boardId)
+            val slots = DayRangeCalculator.compute(
+                busy, settings, java.time.LocalDateTime.now(), horizonDays, nights ?: 1, maxResults
+            )
             val arr = JSONArray()
             val zone = java.time.ZoneId.systemDefault()
             for (s in slots) {

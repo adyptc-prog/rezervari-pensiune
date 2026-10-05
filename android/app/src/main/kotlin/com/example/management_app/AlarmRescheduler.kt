@@ -66,9 +66,7 @@ object AlarmRescheduler {
                 }
                 val itemsJson = prefs.getString(itemsKey, null) ?: continue
                 rescheduleBoard(context, prefs, JSONArray(itemsJson), boardIndex, now)
-                if (boardId.isNotEmpty() &&
-                    BookingSettings.loadSettings(context, boardId).mode == BoardMode.ZILE
-                ) {
+                if (boardId.isNotEmpty()) {
                     rescheduleValidationAlarms(context, prefs, JSONArray(itemsJson), now)
                 }
             }
@@ -127,7 +125,7 @@ object AlarmRescheduler {
         AlarmScheduler.scheduleSmsAlarm(context, id, triggerAtMs)
     }
 
-    // Rearmează termenul de 24h pentru validarea plății (tabele „zile”) —
+    // Rearmează termenul de 24h pentru validarea plății —
     // itemii deja validați sau fără syncId/createdAt sunt ignorați. Termenul
     // se recalculează mereu din createdAt (nu se stochează separat), deci
     // rearmarea e idempotentă indiferent de câte ori rulează.

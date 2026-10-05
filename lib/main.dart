@@ -38,14 +38,10 @@ String _syncSecretKeyFor(String boardId)    => 'sync_secret_$boardId';
 
 // ── Chei pentru setările de rezervări prin SMS (per tabel) ────────────────────
 String _bookingEnabledKeyFor(String boardId)      => 'booking_enabled_$boardId';
-String _appointmentDurationKeyFor(String boardId) => 'appointment_duration_$boardId';
-// În modul „zile” (pensiune), aceste chei sunt reinterpretate ca ora de
-// check-in/check-out (nu program de lucru) și ca zile fără check-in permis
-// (nu zile complet închise) — reutilizate ca să nu dublăm setările pe tabel.
+// Ora de check-in / check-out și zilele fără check-in.
 String _workStartKeyFor(String boardId)           => 'work_start_$boardId';
 String _workEndKeyFor(String boardId)             => 'work_end_$boardId';
 String _closedDaysKeyFor(String boardId)          => 'closed_days_$boardId';
-String _boardModeKeyFor(String boardId)           => 'board_mode_$boardId';
 String _ibanKeyFor(String boardId)                => 'iban_$boardId';
 
 const _kDefaultSmsTemplate =
@@ -325,9 +321,9 @@ class SmsService {
   // platforme (nu există acces SMS acolo, deci nici bot de rezervat).
   static Future<List<_FreeSlot>> _computeFreeSlots(
     String boardId, {
-    int horizonDays = 14,
+    int horizonDays = 90,
     int maxResults = 200,
-    int? nights, // doar pentru tabelele în modul „zile” (pensiune)
+    required int nights,
   }) async {
     if (!Platform.isAndroid) return [];
     try {
@@ -335,7 +331,7 @@ class SmsService {
             'boardId': boardId,
             'horizonDays': horizonDays,
             'maxResults': maxResults,
-            'nights': ?nights,
+            'nights': nights,
           }) ??
           '[]';
       final decoded = jsonDecode(raw) as List<dynamic>;
@@ -354,7 +350,7 @@ class SmsService {
   }
 }
 
-// ─── Serviciu termen de validare (24h) — mod „zile” (pensiune) ─────────────────
+// ─── Serviciu termen de validare a plății (24h) ─────────────────
 // La 24h de la creare, dacă o rezervare nu a fost validată (plată confirmată),
 // e ștearsă automat și clientul e anunțat prin SMS — logica de verificare
 // rulează nativ (ValidationDeadlineReceiver.kt), independent de Flutter, la
@@ -633,13 +629,12 @@ class Item {
   final String? phoneNumber;
   final String? phoneNumber2;
   final String? phoneNumber3;
-  // Data de check-in — folosită doar de tabelele în modul „zile” (pensiune),
-  // unde durata unui sejur variază per rezervare și nu se mai poate deduce
-  // dintr-o durată fixă de tabel ca la salon. Rămâne null pe tabelele de salon.
+  // Data de check-in — durata unui sejur variază per rezervare. Poate lipsi
+  // la sejururile introduse manual fără check-in (atunci se consideră o
+  // noapte înainte de check-out).
   final DateTime? startsAt;
-  // Marcaj manual „plată confirmată” — vizibil doar pe tabelele în modul
-  // „zile”. Nu afectează ocuparea sloturilor (o programare nevalidată rămâne
-  // blocată la fel ca una validată).
+  // Marcaj manual „plată confirmată”. Nu afectează ocuparea (un sejur
+  // nevalidat rămâne blocat la fel ca unul validat).
   final bool validated;
   // Rezervare făcută de client prin botul SMS. Telefonul ei e al clientului
   // (pentru anulare/confirmări), nu un destinatar de alerte: la expirare nu
@@ -823,62 +818,46 @@ class Board {
       );
 }
 
-// Tip de tabel: „interval” (salon — programări cu durată fixă în ore/minute)
-// sau „zile” (pensiune — sejururi de lungime variabilă, pe zile întregi).
-enum BoardMode { interval, zile }
-
 // ─── Setări rezervări prin SMS (per tabel) ────────────────────────────────────
 class BookingSettingsData {
   final bool enabled;
-  final int  durationMin;
-  // În modul „interval”: program de lucru (minute de la miezul nopții).
-  // În modul „zile”: ora fixă de check-in / check-out.
+  // Ora fixă de check-in / check-out (minute de la miezul nopții).
   final int  workStartMin;
   final int  workEndMin;
-  // În modul „interval”: zile complet închise. În modul „zile”: zile în care
-  // nu se acceptă check-in.
+  // Zile în care nu se acceptă check-in.
   final Set<int> closedDays; // DateTime.weekday: 1=luni .. 7=duminică
-  final BoardMode mode;
   // Cont bancar (IBAN) afișat clientului în SMS-ul „așteaptă validarea
-  // plății” — doar mod „zile”. Gol dacă nu a fost completat.
+  // plății”. Gol dacă nu a fost completat.
   final String iban;
 
   const BookingSettingsData({
     required this.enabled,
-    required this.durationMin,
     required this.workStartMin,
     required this.workEndMin,
     required this.closedDays,
-    required this.mode,
     this.iban = '',
   });
 
   static const defaults = BookingSettingsData(
     enabled: false,
-    durationMin: 30,
-    workStartMin: 9 * 60,
-    workEndMin: 18 * 60,
+    workStartMin: 14 * 60, // check-in
+    workEndMin: 11 * 60,   // check-out (a doua zi)
     closedDays: {},
-    mode: BoardMode.interval,
     iban: '',
   );
 
   BookingSettingsData copyWith({
     bool? enabled,
-    int? durationMin,
     int? workStartMin,
     int? workEndMin,
     Set<int>? closedDays,
-    BoardMode? mode,
     String? iban,
   }) =>
       BookingSettingsData(
         enabled:      enabled      ?? this.enabled,
-        durationMin:  durationMin  ?? this.durationMin,
         workStartMin: workStartMin ?? this.workStartMin,
         workEndMin:   workEndMin   ?? this.workEndMin,
         closedDays:   closedDays   ?? this.closedDays,
-        mode:         mode         ?? this.mode,
         iban:         iban         ?? this.iban,
       );
 }
@@ -894,16 +873,11 @@ Future<BookingSettingsData> _loadBookingSettings(
   return BookingSettingsData(
     enabled: prefs.getBool(_bookingEnabledKeyFor(boardId)) ??
         BookingSettingsData.defaults.enabled,
-    durationMin: prefs.getInt(_appointmentDurationKeyFor(boardId)) ??
-        BookingSettingsData.defaults.durationMin,
     workStartMin: prefs.getInt(_workStartKeyFor(boardId)) ??
         BookingSettingsData.defaults.workStartMin,
     workEndMin: prefs.getInt(_workEndKeyFor(boardId)) ??
         BookingSettingsData.defaults.workEndMin,
     closedDays: closed,
-    mode: prefs.getString(_boardModeKeyFor(boardId)) == 'zile'
-        ? BoardMode.zile
-        : BoardMode.interval,
     iban: prefs.getString(_ibanKeyFor(boardId)) ?? '',
   );
 }
@@ -911,12 +885,9 @@ Future<BookingSettingsData> _loadBookingSettings(
 Future<void> _saveBookingSettings(String boardId, BookingSettingsData s) async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.setBool(_bookingEnabledKeyFor(boardId), s.enabled);
-  await prefs.setInt(_appointmentDurationKeyFor(boardId), s.durationMin);
   await prefs.setInt(_workStartKeyFor(boardId), s.workStartMin);
   await prefs.setInt(_workEndKeyFor(boardId), s.workEndMin);
   await prefs.setString(_closedDaysKeyFor(boardId), s.closedDays.join(','));
-  await prefs.setString(
-      _boardModeKeyFor(boardId), s.mode == BoardMode.zile ? 'zile' : 'interval');
   await prefs.setString(_ibanKeyFor(boardId), s.iban);
 }
 
@@ -1578,16 +1549,11 @@ class _ManagementPageState extends State<ManagementPage>
         jsonEncode(deletedBuffer.map((d) => d.toJson()).toList()));
 
     // Reprogramează notificările locale pentru toate înregistrările tabelului
-    final boardSettings = isActiveBoard
-        ? _bookingSettings
-        : await _loadBookingSettings(prefs, boardId);
     for (final item in items) {
       await NotificationService.scheduleFor(item, boardIndex: boardIndex);
       await SmsService.scheduleFor(item,
           template: _smsTemplate, boardIndex: boardIndex);
-      if (boardSettings.mode == BoardMode.zile) {
-        await ValidationService.scheduleFor(item, boardId);
-      }
+      await ValidationService.scheduleFor(item, boardId);
     }
 
     if (isActiveBoard) {
@@ -1817,13 +1783,11 @@ class _ManagementPageState extends State<ManagementPage>
     return isEven ? Colors.white : const Color(0xFFF8FAFC);
   }
 
-  // Lățimea coloanei de acțiuni (Editează/Alertă/[Validează]/Șterge) — mai
-  // lată pe tabelele „zile” din cauza butonului suplimentar de validare.
-  // Trebuie folosită peste tot unde tabelul își calculează lățimea totală
+  // Lățimea coloanei de acțiuni (Editează/Alertă/Validează/Șterge). Trebuie
+  // folosită peste tot unde tabelul își calculează lățimea totală
   // (SizedBox exterior, antet, rânduri libere „Spatiere”), altfel conținutul
   // depășește containerul și butoanele din dreapta ies din zona vizibilă.
-  double get _actionColWidth =>
-      _bookingSettings.mode == BoardMode.zile ? 192 : 148;
+  double get _actionColWidth => 192;
 
   String _formatDateTime(DateTime dt) =>
       '${dt.day.toString().padLeft(2, '0')}.'
@@ -1875,8 +1839,7 @@ class _ManagementPageState extends State<ManagementPage>
       return;
     }
 
-    final isZile = _bookingSettings.mode == BoardMode.zile;
-    final interval = isZile ? await _showSpatiereNightsDialog() : await _showSpatiereDialog();
+    final interval = await _showSpatiereNightsDialog();
     if (interval == null) return;
 
     setState(() {
@@ -1888,140 +1851,12 @@ class _ManagementPageState extends State<ManagementPage>
         ..add((column: SortColumn.expiresAt, ascending: true));
     });
 
-    // Pe tabelele „interval”, durata devine setarea persistentă a tabelului —
-    // folosită și de botul de rezervări prin SMS, ca să nu existe două valori
-    // diferite pentru „cât durează o programare”. Pe tabelele „zile”, lungimea
-    // sejurului variază per rezervare (clientul o alege prin SMS), deci
-    // valoarea aleasă aici e doar o previzualizare locală, nu se salvează.
-    if (!isZile && interval.inMinutes != _bookingSettings.durationMin) {
-      final updated = _bookingSettings.copyWith(durationMin: interval.inMinutes);
-      setState(() => _bookingSettings = updated);
-      await _saveBookingSettings(_activeBoardId, updated);
-    }
+    // Lungimea sejurului variază per rezervare (clientul o alege prin SMS),
+    // deci valoarea aleasă aici e doar o previzualizare locală.
     await _recomputeFreeSlots();
   }
 
-  Future<Duration?> _showSpatiereDialog() async {
-    Duration selected = _spatiereInterval ??
-        Duration(minutes: _bookingSettings.durationMin);
-    const presets = [
-      Duration(minutes: 15),
-      Duration(minutes: 30),
-      Duration(hours: 1),
-      Duration(hours: 2),
-    ];
-    bool custom = !presets.contains(selected);
-    final hoursCtrl = TextEditingController(
-        text: selected.inHours.toString());
-    final minutesCtrl = TextEditingController(
-        text: (selected.inMinutes % 60).toString());
-
-    return showDialog<Duration>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDs) {
-          String label(Duration d) {
-            if (d.inMinutes < 60) return '${d.inMinutes} min';
-            final h = d.inMinutes ~/ 60;
-            final m = d.inMinutes % 60;
-            return m == 0 ? '$h ${h == 1 ? "oră" : "ore"}' : '${h}h ${m}min';
-          }
-
-          Widget presetChip(Duration d) => ChoiceChip(
-                label: Text(label(d)),
-                selected: !custom && selected == d,
-                onSelected: (_) => setDs(() {
-                  selected = d;
-                  custom = false;
-                }),
-              );
-
-          return AlertDialog(
-            title: const Text('Spatiere'),
-            content: SizedBox(
-              width: 360,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Alege intervalul dintre programări. Tabelul va afișa '
-                      'rândurile libere dintre programările existente '
-                      '(sortate după ora de expirare).',
-                      style: TextStyle(fontSize: 13, color: Colors.black54),
-                    ),
-                    const SizedBox(height: 14),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        ...presets.map(presetChip),
-                        ChoiceChip(
-                          label: const Text('Personalizat'),
-                          selected: custom,
-                          onSelected: (_) => setDs(() => custom = true),
-                        ),
-                      ],
-                    ),
-                    if (custom) ...[
-                      const SizedBox(height: 14),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: hoursCtrl,
-                              keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                labelText: 'Ore',
-                                border: OutlineInputBorder(),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: TextField(
-                              controller: minutesCtrl,
-                              keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                labelText: 'Minute',
-                                border: OutlineInputBorder(),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Anulează'),
-              ),
-              FilledButton(
-                onPressed: () {
-                  var result = selected;
-                  if (custom) {
-                    final h = int.tryParse(hoursCtrl.text.trim()) ?? 0;
-                    final m = int.tryParse(minutesCtrl.text.trim()) ?? 0;
-                    result = Duration(hours: h, minutes: m);
-                  }
-                  if (result <= Duration.zero) return;
-                  Navigator.pop(ctx, result);
-                },
-                child: const Text('Aplică'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  // Variantă „Spatiere” pentru tabelele în modul Pensiune — previzualizare
+  // „Spatiere” — previzualizare
   // locală a golurilor de minim N nopți; nu limitează ce oferă botul SMS
   // (clientul alege lungimea sejurului direct prin SMS, independent de asta).
   Future<Duration?> _showSpatiereNightsDialog() async {
@@ -2145,81 +1980,20 @@ class _ManagementPageState extends State<ManagementPage>
       if (_cachedFreeSlots.isNotEmpty) setState(() => _cachedFreeSlots = []);
       return;
     }
-    final isZile = _bookingSettings.mode == BoardMode.zile;
-    // Orizontul de căutare e mai lung pentru pensiune — 14 zile e prea puțin
-    // pentru un sejur planificat cu mult timp înainte.
     final slots = Platform.isAndroid
         ? await SmsService._computeFreeSlots(
             _activeBoardId,
-            horizonDays: isZile ? 90 : 14,
-            nights: isZile ? (_spatiereInterval?.inDays ?? 1) : null,
+            nights: _spatiereInterval?.inDays ?? 1,
           )
-        : (isZile ? _computeFreeSlotsLocalZile() : _computeFreeSlotsLocal());
+        : _computeFreeSlotsLocalZile();
     debugPrint('OrgDiag: _recomputeFreeSlots activeBoardId=$_activeBoardId '
-        'interval=$_spatiereInterval durationMin=${_bookingSettings.durationMin} '
+        'interval=$_spatiereInterval '
         'resultCount=${slots.length}');
     if (!mounted) return;
     setState(() => _cachedFreeSlots = slots);
   }
 
-  // Implementare de rezervă (non-Android) — aceeași logică ca FreeSlotCalculator
-  // din Kotlin: sloturile se aliniază la începutul programului de lucru sau la
-  // finalul programării anterioare, respectând zilele închise.
-  List<_FreeSlot> _computeFreeSlotsLocal() {
-    final interval = _spatiereInterval;
-    if (interval == null || interval <= Duration.zero) return [];
-    final durationMin = interval.inMinutes;
-
-    final busy = _items
-        .where((i) => i.expiresAt != null)
-        .map((i) => (start: i.expiresAt!.subtract(interval), end: i.expiresAt!))
-        .toList()
-      ..sort((a, b) => a.start.compareTo(b.start));
-
-    final result = <_FreeSlot>[];
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    const horizonDays = 14;
-    const maxResults = 200;
-
-    for (var d = 0; d <= horizonDays && result.length < maxResults; d++) {
-      final date = today.add(Duration(days: d));
-      if (_bookingSettings.closedDays.contains(date.weekday)) continue;
-
-      final dayStart = date.add(Duration(minutes: _bookingSettings.workStartMin));
-      final dayEnd   = date.add(Duration(minutes: _bookingSettings.workEndMin));
-      var cursor = dayStart.isBefore(now)
-          ? _roundUpToSlot(now, dayStart, durationMin)
-          : dayStart;
-
-      final dayBusy =
-          busy.where((b) => b.end.isAfter(dayStart) && b.start.isBefore(dayEnd));
-      for (final b in dayBusy) {
-        if (result.length >= maxResults) break;
-        final busyStart = b.start.isBefore(cursor) ? cursor : b.start;
-        while (result.length < maxResults &&
-            !cursor.add(interval).isAfter(busyStart)) {
-          result.add(_FreeSlot(cursor, cursor.add(interval)));
-          cursor = cursor.add(interval);
-        }
-        if (b.end.isAfter(cursor)) cursor = b.end;
-      }
-      while (result.length < maxResults && !cursor.add(interval).isAfter(dayEnd)) {
-        result.add(_FreeSlot(cursor, cursor.add(interval)));
-        cursor = cursor.add(interval);
-      }
-    }
-    return result;
-  }
-
-  DateTime _roundUpToSlot(DateTime from, DateTime dayStart, int durationMin) {
-    if (!from.isAfter(dayStart)) return dayStart;
-    final minutesFromStart = from.difference(dayStart).inMinutes;
-    final slots = (minutesFromStart + durationMin - 1) ~/ durationMin;
-    return dayStart.add(Duration(minutes: slots * durationMin));
-  }
-
-  // Implementare de rezervă (non-Android) pentru modul „zile” — caută, zi cu
+  // Implementare de rezervă (non-Android) — caută, zi cu
   // zi pe orizontul dat, prima secvență de N nopți consecutive libere. Ocupat
   // = [startsAt, expiresAt) al fiecărui sejur existent; dacă un sejur vechi
   // nu are startsAt (introdus manual fără câmpul de check-in), se aproximează
@@ -2326,7 +2100,6 @@ class _ManagementPageState extends State<ManagementPage>
     final descCtrl = TextEditingController(text: existing?.description ?? '');
     DateTime? selectedExpiry = existing?.expiresAt;
     DateTime? selectedStart  = existing?.startsAt;
-    final isZileBoard = _bookingSettings.mode == BoardMode.zile;
 
     final saved = await showDialog<bool>(
       context: context,
@@ -2352,7 +2125,7 @@ class _ManagementPageState extends State<ManagementPage>
                     maxLines: 3,
                   ),
                   const SizedBox(height: 12),
-                  if (isZileBoard) ...[
+                  ...[
                     _buildDatePickerRow(
                       label: selectedStart == null
                           ? 'Check-in: nesetat'
@@ -2387,10 +2160,8 @@ class _ManagementPageState extends State<ManagementPage>
                   ],
                   _buildDatePickerRow(
                     label: selectedExpiry == null
-                        ? (isZileBoard ? 'Check-out: nesetat' : 'Data expirare: nesetată')
-                        : (isZileBoard
-                            ? 'Check-out: ${_formatDateTime(selectedExpiry!)}'
-                            : 'Expirare: ${_formatDateTime(selectedExpiry!)}'),
+                        ? 'Check-out: nesetat'
+                        : 'Check-out: ${_formatDateTime(selectedExpiry!)}',
                     hasValue: selectedExpiry != null,
                     onClear: () => setDs(() => selectedExpiry = null),
                     onPick: () async {
@@ -2407,11 +2178,9 @@ class _ManagementPageState extends State<ManagementPage>
                             ? TimeOfDay(
                                 hour: selectedExpiry!.hour,
                                 minute: selectedExpiry!.minute)
-                            : (isZileBoard
-                                ? TimeOfDay(
-                                    hour: _bookingSettings.workEndMin ~/ 60,
-                                    minute: _bookingSettings.workEndMin % 60)
-                                : TimeOfDay.now()),
+                            : TimeOfDay(
+                                hour: _bookingSettings.workEndMin ~/ 60,
+                                minute: _bookingSettings.workEndMin % 60),
                       );
                       if (time == null) return;
                       setDs(() => selectedExpiry = DateTime(
@@ -2486,7 +2255,7 @@ class _ManagementPageState extends State<ManagementPage>
             template: _smsTemplate, boardIndex: _activeBoardIndex);
         await SyncService.sendAdd(changedItem);
       }
-      if (changedItem != null && _bookingSettings.mode == BoardMode.zile) {
+      if (changedItem != null) {
         await ValidationService.scheduleFor(changedItem, _activeBoardId);
       }
       await _saveItems();
@@ -2693,8 +2462,7 @@ class _ManagementPageState extends State<ManagementPage>
       // acum, nu are sens ca ValidationDeadlineReceiver să mai încerce peste
       // câteva ore să o șteargă din nou și să trimită un al doilea SMS.
       await ValidationService.cancelFor(syncId);
-      if (_bookingSettings.mode == BoardMode.zile &&
-          item.phoneNumber != null &&
+      if (item.phoneNumber != null &&
           item.phoneNumber!.isNotEmpty) {
         await SmsService.sendNow(item.phoneNumber!,
             'Rezervarea ta la ${_activeBoard.name} a fost anulată de proprietar.');
@@ -2704,7 +2472,7 @@ class _ManagementPageState extends State<ManagementPage>
     }
   }
 
-  // ── Validare programare (mod Pensiune) ───────────────────────────────────────
+  // ── Validare plată ───────────────────────────────────────
   // Marcaj manual „plată confirmată” — nu afectează ocuparea sloturilor.
   // Sincronizează statusul către dispozitivul-pereche (dacă e configurat) și,
   // la trecerea pe validat, trimite clientului un SMS de confirmare directă
@@ -2746,7 +2514,6 @@ class _ManagementPageState extends State<ManagementPage>
     const dayLabels = {
       1: 'L', 2: 'Ma', 3: 'Mi', 4: 'J', 5: 'V', 6: 'S', 7: 'D',
     };
-    final isZile = _bookingSettings.mode == BoardMode.zile;
 
     final saved = await showDialog<bool>(
       context: context,
@@ -2760,18 +2527,13 @@ class _ManagementPageState extends State<ManagementPage>
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    isZile
-                        ? 'Clienții pot trimite SMS cu "liber" (opțional urmat '
-                            'de numele tabelului) ca să rezerve un sejur — '
-                            'botul întreabă câte nopți, apoi oferă date '
-                            'disponibile și rezervă direct prin SMS, '
-                            'răspunzând cu numărul opțiunii.'
-                        : 'Clienții pot trimite SMS cu "liber" (opțional urmat '
-                            'de numele tabelului, ex. "liber pensat") ca să '
-                            'primească ore disponibile și să rezerve direct '
-                            'prin SMS, răspunzând cu numărul opțiunii.',
-                    style: const TextStyle(fontSize: 13, color: Colors.black54),
+                  const Text(
+                    'Clienții pot trimite SMS cu "liber" (opțional urmat '
+                    'de numele tabelului) ca să rezerve un sejur — '
+                    'botul întreabă câte nopți, apoi oferă date '
+                    'disponibile și rezervă direct prin SMS, '
+                    'răspunzând cu numărul opțiunii.',
+                    style: TextStyle(fontSize: 13, color: Colors.black54),
                   ),
                   const SizedBox(height: 6),
                   // Trebuie să rămână la fel ca BotLimits.kt.
@@ -2795,7 +2557,7 @@ class _ManagementPageState extends State<ManagementPage>
                       Expanded(
                         child: ListTile(
                           contentPadding: EdgeInsets.zero,
-                          title: Text(isZile ? 'Check-in' : 'Deschidere'),
+                          title: const Text('Check-in'),
                           subtitle: Text(workStart.format(context)),
                           onTap: () async {
                             final t = await showTimePicker(
@@ -2807,7 +2569,7 @@ class _ManagementPageState extends State<ManagementPage>
                       Expanded(
                         child: ListTile(
                           contentPadding: EdgeInsets.zero,
-                          title: Text(isZile ? 'Check-out' : 'Închidere'),
+                          title: const Text('Check-out'),
                           subtitle: Text(workEnd.format(context)),
                           onTap: () async {
                             final t = await showTimePicker(
@@ -2819,8 +2581,8 @@ class _ManagementPageState extends State<ManagementPage>
                     ],
                   ),
                   const SizedBox(height: 8),
-                  Text(isZile ? 'Zile fără check-in' : 'Zile închise',
-                      style: const TextStyle(
+                  const Text('Zile fără check-in',
+                      style: TextStyle(
                           fontSize: 13, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 6),
                   Wrap(
@@ -2840,7 +2602,7 @@ class _ManagementPageState extends State<ManagementPage>
                       );
                     }).toList(),
                   ),
-                  if (isZile) ...[
+                  ...[
                     const SizedBox(height: 14),
                     TextField(
                       controller: ibanCtrl,
@@ -2873,19 +2635,9 @@ class _ManagementPageState extends State<ManagementPage>
 
     final startMin = workStart.hour * 60 + workStart.minute;
     final endMin = workEnd.hour * 60 + workEnd.minute;
-    // În modul „zile”, check-out-ul e de obicei dimineața, mai devreme decât
-    // ora de check-in (ex. check-in 14:00, check-out 11:00 a doua zi) — nu
-    // are sens aceeași validare ca la programul de lucru din modul „interval”.
-    if (!isZile && endMin <= startMin) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content:
-              Text('Ora de închidere trebuie să fie după cea de deschidere.'),
-        ));
-      }
-      return;
-    }
-
+    // Check-out-ul e de obicei dimineața, mai devreme decât ora de check-in
+    // (ex. check-in 14:00, check-out 11:00 a doua zi) — fără validarea de
+    // ordine de la un program de lucru.
     final updated = _bookingSettings.copyWith(
       enabled: enabled,
       workStartMin: startMin,
@@ -2896,77 +2648,6 @@ class _ManagementPageState extends State<ManagementPage>
     setState(() => _bookingSettings = updated);
     await _saveBookingSettings(_activeBoardId, updated);
     await _recomputeFreeSlots();
-  }
-
-  // ── Comutare mod tabel: Salon (interval orar) ⇄ Pensiune (zile întregi) ─────
-  // Permisă doar pe un tabel gol — schimbarea modului redefinește ce înseamnă
-  // „ocupat” pentru toate programările existente (interval fix vs. sejur cu
-  // check-in propriu), deci nu poate fi aplicată retroactiv în siguranță pe
-  // un tabel cu date.
-  Future<void> _toggleBoardMode() async {
-    final targetMode = _bookingSettings.mode == BoardMode.zile
-        ? BoardMode.interval
-        : BoardMode.zile;
-
-    if (_items.isNotEmpty) {
-      if (mounted) {
-        showDialog<void>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Nu se poate comuta modul'),
-            content: Text(
-              'Tabelul "${_activeBoard.name}" are ${_items.length} '
-              'înregistrări. Modul tabelului (Salon / Pensiune) poate fi '
-              'schimbat doar pe un tabel gol, pentru că schimbă felul în '
-              'care se calculează ocuparea programărilor existente. '
-              'Creează un tabel nou dedicat pentru ${targetMode == BoardMode.zile ? "pensiune" : "salon"}.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Am înțeles'),
-              ),
-            ],
-          ),
-        );
-      }
-      return;
-    }
-
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(targetMode == BoardMode.zile
-            ? 'Comută tabelul "${_activeBoard.name}" în modul Pensiune?'
-            : 'Comută tabelul "${_activeBoard.name}" în modul Salon?'),
-        content: Text(targetMode == BoardMode.zile
-            ? 'Programările vor fi sejururi pe zile întregi (nu ore): '
-                'formularul de adăugare va cere și data de check-in, '
-                '„Spatiere” va arăta perioade libere în nopți, iar botul '
-                'SMS va întreba clienții câte nopți vor înainte să le ofere '
-                'date disponibile.'
-            : 'Tabelul revine la programări cu durată fixă, ca la salon.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Anulează'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Comută'),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-
-    final updated = _bookingSettings.copyWith(mode: targetMode);
-    setState(() {
-      _bookingSettings = updated;
-      _spatiereActiva = false;
-      _cachedFreeSlots = [];
-    });
-    await _saveBookingSettings(_activeBoardId, updated);
   }
 
   // ── Dialog sincronizare dispozitiv ───────────────────────────────────────────
@@ -3427,19 +3108,6 @@ class _ManagementPageState extends State<ManagementPage>
                   : 'Configurează rezervări prin SMS',
               onPressed: _showBookingSettingsDialog,
             ),
-          // Buton comutare mod tabel (Salon / Pensiune)
-          IconButton(
-            icon: Icon(
-              Icons.hotel,
-              color: _bookingSettings.mode == BoardMode.zile
-                  ? Colors.greenAccent.shade100
-                  : Colors.white54,
-            ),
-            tooltip: _bookingSettings.mode == BoardMode.zile
-                ? 'Mod Pensiune activ (zile întregi)'
-                : 'Comută în modul Pensiune (zile întregi)',
-            onPressed: _toggleBoardMode,
-          ),
           IconButton(
             icon: Icon(
               _searchVisible ? Icons.search_off : Icons.search,
@@ -3660,9 +3328,7 @@ class _ManagementPageState extends State<ManagementPage>
                                                                 onPressed: () =>
                                                                     _showWarningDialog(item),
                                                               ),
-                                                              if (_bookingSettings.mode ==
-                                                                  BoardMode.zile)
-                                                                _actionBtn(
+                                                              _actionBtn(
                                                                   icon: item.validated
                                                                       ? Icons.check_circle
                                                                       : Icons.check_circle_outline,

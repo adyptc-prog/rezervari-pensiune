@@ -3,12 +3,14 @@ package com.example.management_app
 import java.time.LocalDate
 import java.time.LocalDateTime
 
+/** O perioadă liberă: [start, end) — check-in → check-out. */
+data class FreeSlot(val start: LocalDateTime, val end: LocalDateTime)
+
 /**
- * Calculează perioadele libere pentru tabelele în modul „zile” (pensiune) —
- * spre deosebire de [FreeSlotCalculator] (sloturi de durată fixă în interiorul
- * unei zile de lucru), aici lungimea sejurului e variabilă (aleasă de client
- * prin SMS) și un sejur poate — de fapt trebuie — să treacă peste granița
- * zilei calendaristice.
+ * Calculează perioadele libere ale unui tabel — lungimea sejurului e variabilă
+ * (aleasă de client prin SMS) și un sejur trece peste granița zilei
+ * calendaristice. Folosit atât de „Spatiere” din aplicație, cât și de botul
+ * SMS de rezervări.
  *
  * Scanează orizontul zi cu zi și, pentru fiecare zi candidată de check-in,
  * verifică dacă intervalul [check-in, check-in + nights) se suprapune cu

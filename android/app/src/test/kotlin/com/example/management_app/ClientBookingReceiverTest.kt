@@ -33,9 +33,8 @@ class ClientBookingReceiverTest {
             .putString("flutter.management_boards",
                 JSONArray().put(JSONObject().put("id", "b1").put("name", "Salon Ana")).toString())
             .putBoolean("flutter.booking_enabled_b1", true)
-            .putLong("flutter.appointment_duration_b1", 30L)
-            .putLong("flutter.work_start_b1", 0L)
-            .putLong("flutter.work_end_b1", 24L * 60 - 1)
+            .putLong("flutter.work_start_b1", 14L * 60) // check-in
+            .putLong("flutter.work_end_b1", 11L * 60)   // check-out
             .putString("flutter.management_items_b1", "[]")
             .commit()
         SmsSender.testSink = { phone, message -> sent.add(phone to message) }
@@ -55,9 +54,11 @@ class ClientBookingReceiverTest {
 
     private fun queueFutureBooking(syncId: String, daysAhead: Long) {
         val fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")
-        val end = LocalDateTime.now().plusDays(daysAhead).withHour(12).withMinute(0)
+        val start = LocalDateTime.now().plusDays(daysAhead).withHour(14).withMinute(0)
+        val end = start.plusDays(1).withHour(11)
         val payload = JSONObject().put("s", syncId).put("n", client)
-            .put("c", end.minusMinutes(30).format(fmt)).put("e", end.format(fmt)).put("p1", client)
+            .put("c", LocalDateTime.now().format(fmt)).put("st", start.format(fmt))
+            .put("e", end.format(fmt)).put("p1", client)
         SmsSyncReceiver.enqueue(context, "b1", "PEN:A:$payload")
     }
 
@@ -66,7 +67,29 @@ class ClientBookingReceiverTest {
         receiver.handleMessage(context, client, "liber")
         val sent = lastSent()
         assertNotNull(sent)
-        assertTrue(sent!!.startsWith("Ore libere Salon Ana"))
+        assertTrue(sent!!.startsWith("Câte nopți?"))
+    }
+
+    @Test
+    fun `fluxul complet - nopti, date disponibile, rezervare cu termen de plata`() {
+        receiver.handleMessage(context, client, "liber")
+        receiver.handleMessage(context, client, "2")
+        assertTrue(lastSent()!!.startsWith("Disponibil 2 nopți la Salon Ana"))
+        receiver.handleMessage(context, client, "1")
+        assertTrue(lastSent()!!.startsWith("Rezervarea ta la Salon Ana"))
+        assertTrue(lastSent()!!.contains("Achită în maxim 24 de ore"))
+
+        val payload = JSONObject(
+            JSONArray(SmsSyncReceiver.snapshot(context)).getJSONObject(0)
+                .getString("msg").removePrefix("PEN:A:")
+        )
+        assertTrue(payload.has("st")) // check-in
+        // Termenul de plată de 24h a fost programat nativ.
+        val alarmId = AlarmScheduler.validationAlarmId(payload.getString("s"))
+        assertTrue(
+            context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+                .contains("flutter.validation_alarm_$alarmId")
+        )
     }
 
     @Test
@@ -106,11 +129,12 @@ class ClientBookingReceiverTest {
 
     @Test
     fun `a doua rezervare activa e permisa, a treia nu`() {
-        queueFutureBooking("r1", 1)
+        queueFutureBooking("r1", 20)
         receiver.handleMessage(context, client, "liber")
-        assertTrue(lastSent()!!.startsWith("Ore libere"))
+        assertTrue(lastSent()!!.startsWith("Câte nopți?"))
         receiver.handleMessage(context, client, "1")
-        assertTrue(lastSent()!!.startsWith("Programarea ta"))
+        receiver.handleMessage(context, client, "1")
+        assertTrue(lastSent()!!.startsWith("Rezervarea ta"))
 
         receiver.handleMessage(context, client, "liber")
         assertTrue(lastSent()!!.startsWith("Ai deja 2 rezervări active"))
@@ -137,6 +161,7 @@ class ClientBookingReceiverTest {
     @Test
     fun `rezervarea facuta de bot e marcata (fara SMS EXPIRAT)`() {
         receiver.handleMessage(context, client, "liber")
+        receiver.handleMessage(context, client, "1")
         receiver.handleMessage(context, client, "1")
         val arr = JSONArray(SmsSyncReceiver.snapshot(context))
         val msg = arr.getJSONObject(0).getString("msg")

@@ -40,12 +40,6 @@ class BookingSettingsQueueTest {
     }
 
     @Test
-    fun `ora rezervata ramane ocupata chiar daca alta intrare e corupta`() {
-        val busy = BookingSettings.loadBusyIntervals(context, "b1", 30)
-        assertEquals(listOf(LocalDateTime.of(2030, 1, 12, 11, 0)), busy.map { it.endMin })
-    }
-
-    @Test
     fun `sejurul rezervat ramane ocupat chiar daca alta intrare e corupta`() {
         val busy = BookingSettings.loadZileBusyRanges(context, "b1")
         assertEquals(1, busy.size)

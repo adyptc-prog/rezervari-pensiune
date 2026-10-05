@@ -172,4 +172,17 @@ void main() {
       expect(tester.takeException(), isNull); // fără RenderFlex overflow
     });
   });
+
+  testWidgets('aplicația de pensiune: check-in/check-out, fără comutator de mod',
+      (tester) async {
+    await tester.pumpWidget(const ManagementApp());
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.hotel), findsNothing);
+
+    await tester.tap(find.byIcon(Icons.add_circle_rounded));
+    await tester.pumpAndSettle();
+    expect(find.text('Check-in: nesetat'), findsOneWidget);
+    expect(find.text('Check-out: nesetat'), findsOneWidget);
+  });
 }
+
