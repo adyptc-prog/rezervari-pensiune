@@ -1,9 +1,29 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:pensiune_app/main.dart';
+
+// Cinci rezervări de test (tabelul pornește gol la prima instalare).
+const _names = ['Ion Popescu', 'Maria Ionescu', 'Andrei Pop', 'Elena Dobre', 'Mihai Radu'];
+
+Map<String, Object> _withItems() => {
+      'management_items_b1': jsonEncode([
+        for (var i = 0; i < _names.length; i++)
+          {
+            'syncId': 'test$i',
+            'number': i + 1,
+            'name': _names[i],
+            'description': '',
+            'createdAt': '2026-0${i + 1}-01T10:00:00.000',
+            'expiresAt': '2030-0${i + 1}-02T11:00:00.000',
+          },
+      ]),
+      'management_next_number_b1': _names.length + 1,
+    };
 
 void main() {
   setUpAll(() async {
@@ -28,12 +48,21 @@ void main() {
     expect(find.text('Descriere'), findsOneWidget);
   });
 
-  testWidgets('datele demo apar la prima lansare', (tester) async {
+  testWidgets('prima lansare pornește cu tabelul gol', (tester) async {
     await tester.pumpWidget(const ManagementApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('Proiect Alpha'), findsOneWidget);
-    expect(find.text('Raport lunar'), findsOneWidget);
+    expect(find.text('Proiect Alpha'), findsNothing);
+    expect(find.text('0 înregistrări'), findsOneWidget);
+  });
+
+  testWidgets('rezervările salvate apar în tabel', (tester) async {
+    SharedPreferences.setMockInitialValues(_withItems());
+    await tester.pumpWidget(const ManagementApp());
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ion Popescu'), findsOneWidget);
+    expect(find.text('Maria Ionescu'), findsOneWidget);
     expect(find.text('5 înregistrări'), findsOneWidget);
   });
 
@@ -50,6 +79,7 @@ void main() {
   });
 
   testWidgets('adăugarea unui item îl include în tabel', (tester) async {
+    SharedPreferences.setMockInitialValues(_withItems());
     await tester.pumpWidget(const ManagementApp());
     await tester.pumpAndSettle();
 
@@ -66,6 +96,7 @@ void main() {
   });
 
   testWidgets('căutarea filtrează rândurile', (tester) async {
+    SharedPreferences.setMockInitialValues(_withItems());
     await tester.pumpWidget(const ManagementApp());
     await tester.pumpAndSettle();
 
@@ -73,15 +104,16 @@ void main() {
     await tester.tap(find.byIcon(Icons.search));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField).first, 'Alpha');
+    await tester.enterText(find.byType(TextField).first, 'Andrei');
     await tester.pumpAndSettle();
 
-    expect(find.text('Proiect Alpha'), findsOneWidget);
-    expect(find.text('Raport lunar'), findsNothing);
+    expect(find.text('Andrei Pop'), findsOneWidget);
+    expect(find.text('Ion Popescu'), findsNothing);
     expect(find.textContaining('1 din 5'), findsOneWidget);
   });
 
   testWidgets('ștergerea unui item îl elimină din tabel', (tester) async {
+    SharedPreferences.setMockInitialValues(_withItems());
     await tester.pumpWidget(const ManagementApp());
     await tester.pumpAndSettle();
 
@@ -101,10 +133,11 @@ void main() {
 
   testWidgets('tabelele pot fi comutate și sunt independente',
       (tester) async {
+    SharedPreferences.setMockInitialValues(_withItems());
     await tester.pumpWidget(const ManagementApp());
     await tester.pumpAndSettle();
 
-    // Tabelul activ implicit e „Tabel 1”, cu datele demo.
+    // Tabelul activ implicit e „Tabel 1”, cu rezervările de test.
     expect(find.text('Tabel 1'), findsOneWidget);
     expect(find.text('5 înregistrări'), findsOneWidget);
 
@@ -121,7 +154,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Tabel 2'), findsOneWidget);
-    expect(find.text('Proiect Alpha'), findsNothing);
+    expect(find.text('Ion Popescu'), findsNothing);
     expect(find.text('0 înregistrări'), findsOneWidget);
   });
 

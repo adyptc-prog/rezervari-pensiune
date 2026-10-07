@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import org.json.JSONObject
+import java.time.LocalDateTime
 
 /**
  * Se declanșează la 24h după o rezervare pe un tabel „zile” (pensiune) —
@@ -46,6 +47,9 @@ class ValidationDeadlineReceiver : BroadcastReceiver() {
         val item = BookingSettings.loadBookedItems(context, boardId).firstOrNull { it.syncId == syncId }
             ?: return // deja ștearsă (manual sau altfel) — nimic de făcut
         if (item.validated) return // plata a fost confirmată între timp
+        // Sejurul a început deja (sau s-a încheiat): clientul e/a fost la
+        // pensiune — nu anulăm și nu-i trimitem „anulată automat”.
+        if (!stayIsInFuture(item, LocalDateTime.now())) return
 
         val boardName = BookingSettings.loadBoards(context).firstOrNull { it.id == boardId }?.name ?: ""
         SmsSyncReceiver.enqueue(context, boardId, "PEN:D:$syncId")
@@ -55,6 +59,14 @@ class ValidationDeadlineReceiver : BroadcastReceiver() {
             context, phone,
             "Rezervarea ta la $boardName a fost anulată automat — plata nu a fost confirmată în cele 24 de ore."
         )
+    }
+
+    companion object {
+        /** Check-in-ul (sau, fără el, check-out-ul) e încă în viitor. */
+        internal fun stayIsInFuture(item: BookedItem, now: LocalDateTime): Boolean {
+            val start = item.startsAt ?: item.expiresAt?.minusDays(1) ?: return true
+            return start.isAfter(now)
+        }
     }
 
     private fun sendSmsNow(context: Context, phone: String, message: String) {
