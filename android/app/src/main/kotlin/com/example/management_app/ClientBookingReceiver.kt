@@ -221,7 +221,7 @@ class ClientBookingReceiver : BroadcastReceiver() {
                 markHelped(context, CANCEL_OFFERS_KEY, senderDigits)
                 sendSms(
                     context, sender,
-                    "Nu am înțeles. Răspunde doar cu numărul programării pe care vrei " +
+                    "Nu am înțeles. Răspunde doar cu numărul rezervării pe care vrei " +
                         "să o anulezi (ex. 1)."
                 )
             }

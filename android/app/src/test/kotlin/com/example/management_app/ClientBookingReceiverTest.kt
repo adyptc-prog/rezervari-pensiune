@@ -291,6 +291,17 @@ class ClientBookingReceiverTest {
     }
 
     @Test
+    fun `neconfirmatele de peste 24 de ore blocheaza si cu aplicatia inchisa`() {
+        setNoShows(2)
+        context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE).edit()
+            .putString("flutter.no_show_pending", JSONObject().put("712345678",
+                JSONArray().put(LocalDateTime.now().minusHours(30).toString())).toString())
+            .commit()
+        receiver.handleMessage(context, client, "liber")
+        assertTrue(lastSent()!!.startsWith("Nu mai poți face rezervări prin SMS"))
+    }
+
+    @Test
     fun `clientul blocat isi poate anula programarea`() {
         queueFutureBooking("r1", 1)
         setNoShows(3)

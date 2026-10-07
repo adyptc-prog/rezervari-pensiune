@@ -31,6 +31,17 @@ class NoShowStoreTest {
     }
 
     @Test
+    fun `programarile neconfirmate conteaza dupa 24 de ore`() {
+        val now = LocalDateTime.of(2030, 6, 1, 12, 0)
+        val pending = JSONObject().put("712345678", JSONArray()
+            .put("2030-05-31T11:00:00.000") // 25h — contează
+            .put("2030-05-31T13:00:00.000") // 23h — încă nu
+            .put("2030-06-02T10:00:00.000") // viitoare
+            .put("2029-11-01T10:00:00.000")).toString() // > 6 luni
+        assertEquals(1, NoShowStore.countPending(pending, "712345678", now))
+    }
+
+    @Test
     fun `pragul 0 inseamna niciodata`() {
         assertTrue(NoShowStore.isBlocked(3, 3))
         assertFalse(NoShowStore.isBlocked(2, 3))

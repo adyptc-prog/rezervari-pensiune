@@ -12,11 +12,16 @@ import java.time.LocalDateTime
  * plus pragul în „flutter.no_show_block_threshold” (0 = niciodată). Aici se
  * recalculează doar fereastra de 6 luni, ca o bilă să expire la timp chiar
  * dacă aplicația nu mai e deschisă.
+ *
+ * Programările încă neconfirmate stau în „flutter.no_show_pending” (același
+ * format, cu ora de final): la 24 de ore după final contează și ele — aplicația
+ * le marchează la fel când e deschisă, dar botul nu trebuie s-o aștepte.
  */
 object NoShowStore {
 
     const val DEFAULT_THRESHOLD = 3
     private const val WINDOW_DAYS = 180L
+    private const val AUTO_NO_SHOW_HOURS = 24L
 
     /** Cheia clientului: ultimele 9 cifre, la fel ca clientKey() din Dart. */
     fun clientKey(phone: String): String {
@@ -46,6 +51,27 @@ object NoShowStore {
         return n
     }
 
+    /** Neprezentările automate: neconfirmate la 24 de ore după final, din ultimele 6 luni. */
+    fun countPending(pendingJson: String?, key: String, now: LocalDateTime): Int {
+        if (key.isEmpty() || pendingJson.isNullOrBlank()) return 0
+        val dates = try {
+            JSONObject(pendingJson).optJSONArray(key)
+        } catch (_: Exception) {
+            null
+        } ?: return 0
+        val cutoff = now.minusDays(WINDOW_DAYS)
+        var n = 0
+        for (i in 0 until dates.length()) {
+            val at = try {
+                LocalDateTime.parse(dates.optString(i))
+            } catch (_: Exception) {
+                null
+            } ?: continue
+            if (at.isAfter(cutoff) && !at.plusHours(AUTO_NO_SHOW_HOURS).isAfter(now)) n++
+        }
+        return n
+    }
+
     fun isBlocked(count: Int, threshold: Int): Boolean = threshold > 0 && count >= threshold
 
     fun threshold(context: Context): Int {
@@ -53,8 +79,13 @@ object NoShowStore {
         return v?.toInt() ?: DEFAULT_THRESHOLD
     }
 
-    fun countFor(context: Context, phone: String): Int =
-        count(prefs(context).getString("flutter.no_show_summary", null), clientKey(phone), LocalDateTime.now())
+    fun countFor(context: Context, phone: String): Int {
+        val p = prefs(context)
+        val key = clientKey(phone)
+        val now = LocalDateTime.now()
+        return count(p.getString("flutter.no_show_summary", null), key, now) +
+            countPending(p.getString("flutter.no_show_pending", null), key, now)
+    }
 
     private fun prefs(context: Context) =
         context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
