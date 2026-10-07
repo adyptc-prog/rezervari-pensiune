@@ -270,6 +270,56 @@ class ClientBookingReceiverTest {
         else assertFalse(j.has("w"))
     }
 
+    private fun setNoShows(count: Int, threshold: Int? = null) {
+        val dates = JSONArray()
+        repeat(count) { dates.put(LocalDateTime.now().minusDays(it + 1L).toString()) }
+        val e = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE).edit()
+            .putString("flutter.no_show_summary", JSONObject().put("712345678", dates).toString())
+        if (threshold != null) e.putLong("flutter.no_show_block_threshold", threshold.toLong())
+        e.commit()
+    }
+
+    @Test
+    fun `clientul cu 3 neprezentari e refuzat o data, apoi botul tace`() {
+        setNoShows(3)
+        receiver.handleMessage(context, client, "liber")
+        assertTrue(lastSent()!!.startsWith("Nu mai poți face rezervări prin SMS"))
+        clearSent()
+        receiver.handleMessage(context, client, "liber")
+        receiver.handleMessage(context, client, "1")
+        assertNull(lastSent())
+    }
+
+    @Test
+    fun `clientul blocat isi poate anula programarea`() {
+        queueFutureBooking("r1", 1)
+        setNoShows(3)
+        receiver.handleMessage(context, client, "anuleaza")
+        assertTrue(lastSent()!!.contains("a fost anulată"))
+    }
+
+    @Test
+    fun `cu o neprezentare sub prag clientul e avertizat la confirmare`() {
+        setNoShows(2)
+        receiver.handleMessage(context, client, "liber")
+        receiver.handleMessage(context, client, "1")
+        receiver.handleMessage(context, client, "1")
+        assertTrue(lastSent()!!.contains("Atenție: ai 2 neprezentări. La 3 nu mai poți rezerva prin SMS."))
+    }
+
+    @Test
+    fun `pragul ales in aplicatie e respectat, iar 0 dezactiveaza blocarea`() {
+        setNoShows(2, threshold = 2)
+        receiver.handleMessage(context, client, "liber")
+        assertTrue(lastSent()!!.startsWith("Nu mai poți face rezervări prin SMS"))
+
+        context.getSharedPreferences("ClientBookingPrefs", Context.MODE_PRIVATE).edit().clear().commit()
+        setNoShows(5, threshold = 0)
+        clearSent()
+        receiver.handleMessage(context, client, "liber")
+        assertTrue(lastSent()!!.startsWith("Câte nopți?"))
+    }
+
     @Test
     fun `fara interval salvat alerta e cu o ora inainte de sosire`() {
         assertEquals(60, BookingSettings.loadAlertLeadMin(context, "b1"))
