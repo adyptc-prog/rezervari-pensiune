@@ -168,5 +168,37 @@ class ClientBookingReceiverTest {
         assertTrue(msg.startsWith("PEN:A:"))
         assertEquals(true, JSONObject(msg.removePrefix("PEN:A:")).getBoolean("b"))
     }
+
+    private fun lastQueued(): JSONObject {
+        val arr = JSONArray(SmsSyncReceiver.snapshot(context))
+        return JSONObject(arr.getJSONObject(arr.length() - 1).getString("msg").removePrefix("PEN:A:"))
+    }
+
+    @Test
+    fun `rezervarea facuta de bot primeste alerta inainte de sosire`() {
+        context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE).edit()
+            .putLong("flutter.alert_lead_minutes_b1", 1440L).commit()
+        receiver.handleMessage(context, client, "liber")
+        receiver.handleMessage(context, client, "1")
+        receiver.handleMessage(context, client, "3")
+        val j = lastQueued()
+        val fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")
+        val start = LocalDateTime.parse(j.getString("st"), fmt)
+        val w = start.minusDays(1)
+        if (w.isAfter(LocalDateTime.now())) assertEquals(w.format(fmt), j.getString("w"))
+        else assertFalse(j.has("w"))
+    }
+
+    @Test
+    fun `fara interval salvat alerta e cu o ora inainte de sosire`() {
+        assertEquals(60, BookingSettings.loadAlertLeadMin(context, "b1"))
+        receiver.handleMessage(context, client, "liber")
+        receiver.handleMessage(context, client, "1")
+        receiver.handleMessage(context, client, "3")
+        val j = lastQueued()
+        val fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")
+        val start = LocalDateTime.parse(j.getString("st"), fmt)
+        assertEquals(start.minusMinutes(60).format(fmt), j.getString("w"))
+    }
 }
 

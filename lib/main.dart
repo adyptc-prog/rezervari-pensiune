@@ -44,8 +44,46 @@ String _workEndKeyFor(String boardId)             => 'work_end_$boardId';
 String _closedDaysKeyFor(String boardId)          => 'closed_days_$boardId';
 String _ibanKeyFor(String boardId)                => 'iban_$boardId';
 
+// ── Cu cât timp înainte de sosire vine alerta (per tabel, în minute) ─────────
+// Ultima valoare aleasă în „Setează alertă” — folosită automat pentru
+// rezervările noi (adăugate manual sau prin botul SMS). Citită și nativ de
+// ClientBookingReceiver, ca rezervările prin bot să aibă alerta din start.
+// Alerta se socotește față de sosire (startsAt); rezervările fără dată de
+// sosire o socotesc față de plecare (expiresAt).
+String _alertLeadKeyFor(String boardId) => 'alert_lead_minutes_$boardId';
+const kDefaultAlertLeadMin = 60;
+
+int _loadAlertLead(SharedPreferences prefs, String boardId) {
+  final v = prefs.getInt(_alertLeadKeyFor(boardId));
+  return v != null && v > 0 ? v : kDefaultAlertLeadMin;
+}
+
+/// Ora alertei pentru o rezervare cu sosirea (sau, fără ea, plecarea) la
+/// [anchor]: cu [leadMin] minute înainte. Null dacă acel moment a trecut deja
+/// (alerta n-ar mai pleca niciodată).
+DateTime? autoWarningFor(DateTime? anchor, int leadMin, {DateTime? now}) {
+  if (anchor == null || leadMin <= 0) return null;
+  final w = anchor.subtract(Duration(minutes: leadMin));
+  return w.isAfter(now ?? DateTime.now()) ? w : null;
+}
+
+/// „90” → „1h 30min”, „1440” → „1 zi”.
+String formatAlertLead(int minutes) {
+  if (minutes < 60) return '$minutes min';
+  if (minutes % 1440 == 0) {
+    final d = minutes ~/ 1440;
+    return '$d ${d == 1 ? "zi" : "zile"}';
+  }
+  final h = minutes ~/ 60;
+  final m = minutes % 60;
+  if (m == 0) return '$h ${h == 1 ? "oră" : "ore"}';
+  return '${h}h ${m}min';
+}
+
 const _kDefaultSmsTemplate =
     'Alertă: [NUME]. Va expira la [DATA_EXPIRARE]. Te rugăm să iei măsurile necesare.';
+
+enum _AlertMode { lead, exact, none }
 
 // ─── Helper: ID unic stabil pentru sincronizare ───────────────────────────────
 String _generateSyncId() {
@@ -214,6 +252,23 @@ class SmsService {
     } catch (_) {
       return null;
     }
+  }
+
+  // Xiaomi: fără „Pornire automată”, aplicația glisată din Recente nu mai e
+  // pornită de sistem pentru SMS-urile primite (botul și sincronizarea tac).
+  // true = refuzată; false = permisă, necunoscută sau alt producător.
+  static Future<bool> autostartBlocked() async {
+    if (!isAndroid) return false;
+    try {
+      return await _ch.invokeMethod<String>('getAutostartState') == 'denied';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> openAutostartSettings() async {
+    if (!isAndroid) return;
+    try { await _ch.invokeMethod<bool>('openAutostartSettings'); } catch (_) {}
   }
 
   static Future<void> dismissFailure() async {
@@ -1005,6 +1060,7 @@ class _ManagementPageState extends State<ManagementPage>
   Timer? _colorTimer;
   Timer? _syncQueueTimer;
   String _smsTemplate = _kDefaultSmsTemplate;
+  int _alertLeadMin = kDefaultAlertLeadMin;
 
   // Înainte ca _loadData să termine încărcarea inițială, _boards e încă gol
   // (Scaffold-ul cu spinner se construiește imediat) — nu explodăm în acel caz.
@@ -1032,6 +1088,17 @@ class _ManagementPageState extends State<ManagementPage>
     await NotificationService.requestPermissions();
     await _checkSmsPermission();
     await _checkSmsFailure();
+    await _checkAutostart();
+  }
+
+  // ── Pornire automată (Xiaomi) ────────────────────────────────────────────────
+  bool _autostartBlocked = false;
+
+  Future<void> _checkAutostart() async {
+    final blocked = await SmsService.autostartBlocked();
+    if (mounted && blocked != _autostartBlocked) {
+      setState(() => _autostartBlocked = blocked);
+    }
   }
 
   // Versiunea instalată, afișată sub tabel — utilizatorul o compară cu cea de
@@ -1290,6 +1357,7 @@ class _ManagementPageState extends State<ManagementPage>
         _refreshLicense();
         _checkSmsPermission();
         _checkSmsFailure();
+        _checkAutostart();
         if (mounted) setState(() {});
       case AppLifecycleState.paused:
       case AppLifecycleState.inactive:
@@ -1323,6 +1391,7 @@ class _ManagementPageState extends State<ManagementPage>
       nextNumber    = prefs.getInt(_nextNumberKeyFor(_activeBoardId)) ?? 1;
       _smsTemplate  = prefs.getString(_kSmsTemplateKey) ?? _kDefaultSmsTemplate;
       _bookingSettings = await _loadBookingSettings(prefs, _activeBoardId);
+      _alertLeadMin = _loadAlertLead(prefs, _activeBoardId);
       final deletedStr = prefs.getString(_deletedBufferKeyFor(_activeBoardId));
       if (deletedStr != null) {
         final deletedList = (jsonDecode(deletedStr) as List<dynamic>)
@@ -1469,6 +1538,7 @@ class _ManagementPageState extends State<ManagementPage>
       }
     }
 
+    final alertLeadMin = _loadAlertLead(prefs, boardId);
     bool changed = false;
     final removed = <Item>[];
     for (final msg in messages) {
@@ -1476,7 +1546,14 @@ class _ManagementPageState extends State<ManagementPage>
         if (msg.startsWith('PEN:A:') || msg.startsWith('PEN:I:')) {
           final prefix = msg.startsWith('PEN:A:') ? 'PEN:A:' : 'PEN:I:';
           final j = jsonDecode(msg.substring(prefix.length)) as Map<String, dynamic>;
-          final incoming = Item.fromSyncJson(j);
+          var incoming = Item.fromSyncJson(j);
+          // Rezervare prin bot fără alertă (scrisă de o versiune care nu o
+          // calcula nativ) — primește intervalul implicit al tabelului.
+          if (incoming.viaBot && incoming.warningAt == null) {
+            final w = autoWarningFor(
+                incoming.startsAt ?? incoming.expiresAt, alertLeadMin);
+            if (w != null) incoming = incoming.copyWith(warningAt: w);
+          }
           final idx = items.indexWhere((e) => e.syncId == incoming.syncId);
           if (idx == -1) {
             items.add(incoming.copyWith(number: nextNumber++));
@@ -2089,6 +2166,19 @@ class _ManagementPageState extends State<ManagementPage>
   }
 
   // ── Dialog adăugare / editare ────────────────────────────────────────────────
+  // La mutarea unei rezervări, alerta se mută odată cu ea, cu același
+  // interval înainte de sosire — altfel ar pleca la ora veche.
+  DateTime? _shiftedWarning(Item item, DateTime? newAnchor) {
+    final oldWarning = item.warningAt;
+    final oldAnchor  = item.startsAt ?? item.expiresAt;
+    if (oldWarning == null || oldAnchor == null || newAnchor == null ||
+        newAnchor == oldAnchor) {
+      return oldWarning;
+    }
+    return autoWarningFor(
+        newAnchor, oldAnchor.difference(oldWarning).inMinutes);
+  }
+
   Future<void> _showItemDialog({Item? existing}) async {
     final isEdit  = existing != null;
     // Verificare limită versiune gratuită (doar la adăugare, nu la editare)
@@ -2214,6 +2304,11 @@ class _ManagementPageState extends State<ManagementPage>
                         clearExpiry: selectedExpiry == null,
                         startsAt: selectedStart,
                         clearStartsAt: selectedStart == null,
+                        warningAt: _shiftedWarning(
+                            existing, selectedStart ?? selectedExpiry),
+                        clearWarning: _shiftedWarning(
+                                existing, selectedStart ?? selectedExpiry) ==
+                            null,
                       );
                     }
                   } else {
@@ -2225,6 +2320,8 @@ class _ManagementPageState extends State<ManagementPage>
                       createdAt:   DateTime.now(),
                       expiresAt:   selectedExpiry,
                       startsAt:    selectedStart,
+                      warningAt: autoWarningFor(
+                          selectedStart ?? selectedExpiry, _alertLeadMin),
                     ));
                   }
                 });
@@ -2263,14 +2360,40 @@ class _ManagementPageState extends State<ManagementPage>
   }
 
   // ── Dialog alertă + SMS ──────────────────────────────────────────────────────
+  static int _parseLead(TextEditingController hours,
+          TextEditingController minutes) =>
+      (int.tryParse(hours.text.trim()) ?? 0) * 60 +
+      (int.tryParse(minutes.text.trim()) ?? 0);
+
   Future<void> _showWarningDialog(Item item) async {
-    DateTime? selectedWarning = item.warningAt;
-    if (selectedWarning == null && item.expiresAt != null) {
-      final candidate = item.expiresAt!.subtract(const Duration(hours: 1));
-      if (candidate.isAfter(DateTime.now())) {
-        selectedWarning = candidate;
+    // Intervalul se socotește față de sosire (sau plecare, fără sosire).
+    final expiresAt = item.startsAt ?? item.expiresAt;
+    const presets = [15, 30, 60, 120, 1440];
+    // Modul alertei: cu un interval înainte de expirare (implicit), la o
+    // oră exactă aleasă din calendar, sau deloc.
+    var mode = _AlertMode.lead;
+    var leadMin = _alertLeadMin;
+    DateTime? exactWarning = item.warningAt;
+    if (expiresAt == null) {
+      mode = item.warningAt != null ? _AlertMode.exact : _AlertMode.none;
+    } else if (item.warningAt != null) {
+      final diff = expiresAt.difference(item.warningAt!).inMinutes;
+      if (diff > 0) {
+        leadMin = diff;
+      } else {
+        mode = _AlertMode.exact;
       }
     }
+    bool custom = !presets.contains(leadMin);
+    final hoursCtrl   = TextEditingController(text: '${leadMin ~/ 60}');
+    final minutesCtrl = TextEditingController(text: '${leadMin % 60}');
+
+    DateTime? effectiveWarning() => switch (mode) {
+          _AlertMode.lead  => expiresAt?.subtract(Duration(minutes: leadMin)),
+          _AlertMode.exact => exactWarning,
+          _AlertMode.none  => null,
+        };
+
     final phone1Ctrl = TextEditingController(text: item.phoneNumber  ?? '');
     final phone2Ctrl = TextEditingController(text: item.phoneNumber2 ?? '');
     final phone3Ctrl = TextEditingController(text: item.phoneNumber3 ?? '');
@@ -2300,44 +2423,155 @@ class _ManagementPageState extends State<ManagementPage>
                       ),
                     ),
                   const SizedBox(height: 16),
-                  _buildDatePickerRow(
-                    label: selectedWarning == null
-                        ? 'Alertă: nesetată'
-                        : 'Alertă la: ${_formatDateTime(selectedWarning!)}',
-                    hasValue: selectedWarning != null,
-                    icon: Icons.alarm,
-                    onClear: () => setDs(() => selectedWarning = null),
-                    onPick: () async {
-                      final date = await showDatePicker(
-                        context: ctx,
-                        initialDate: selectedWarning ?? DateTime.now(),
-                        firstDate: DateTime(2020), lastDate: DateTime(2100),
-                      );
-                      if (date == null) return;
-                      if (!ctx.mounted) return;
-                      final time = await showTimePicker(
-                        context: ctx,
-                        initialTime: selectedWarning != null
-                            ? TimeOfDay(
-                                hour: selectedWarning!.hour,
-                                minute: selectedWarning!.minute)
-                            : TimeOfDay.now(),
-                      );
-                      if (time == null) return;
-                      setDs(() => selectedWarning = DateTime(
-                          date.year, date.month, date.day,
-                          time.hour, time.minute));
-                    },
+                  const Text('Alertă',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w600, fontSize: 13)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      if (expiresAt != null) ...[
+                        for (final p in presets)
+                          ChoiceChip(
+                            label: Text('${formatAlertLead(p)} înainte'),
+                            selected: mode == _AlertMode.lead &&
+                                !custom && leadMin == p,
+                            onSelected: (_) => setDs(() {
+                              mode = _AlertMode.lead;
+                              custom = false;
+                              leadMin = p;
+                              hoursCtrl.text = '${p ~/ 60}';
+                              minutesCtrl.text = '${p % 60}';
+                            }),
+                          ),
+                        ChoiceChip(
+                          label: const Text('Personalizat'),
+                          selected: mode == _AlertMode.lead && custom,
+                          onSelected: (_) => setDs(() {
+                            mode = _AlertMode.lead;
+                            custom = true;
+                          }),
+                        ),
+                      ],
+                      ChoiceChip(
+                        label: const Text('Oră exactă'),
+                        selected: mode == _AlertMode.exact,
+                        onSelected: (_) => setDs(() {
+                          mode = _AlertMode.exact;
+                          exactWarning ??= effectiveWarning();
+                        }),
+                      ),
+                      ChoiceChip(
+                        label: const Text('Fără alertă'),
+                        selected: mode == _AlertMode.none,
+                        onSelected: (_) =>
+                            setDs(() => mode = _AlertMode.none),
+                      ),
+                    ],
                   ),
-                  if (selectedWarning != null &&
-                      item.expiresAt != null &&
-                      selectedWarning!.isAfter(item.expiresAt!))
+                  if (mode == _AlertMode.lead && custom) ...[
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: hoursCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Ore înainte',
+                              border: OutlineInputBorder(),
+                            ),
+                            onChanged: (_) => setDs(() {
+                              leadMin = _parseLead(hoursCtrl, minutesCtrl);
+                            }),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextField(
+                            controller: minutesCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Minute înainte',
+                              border: OutlineInputBorder(),
+                            ),
+                            onChanged: (_) => setDs(() {
+                              leadMin = _parseLead(hoursCtrl, minutesCtrl);
+                            }),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  if (mode == _AlertMode.exact) ...[
+                    const SizedBox(height: 8),
+                    _buildDatePickerRow(
+                      label: exactWarning == null
+                          ? 'Alertă: nesetată'
+                          : 'Alertă la: ${_formatDateTime(exactWarning!)}',
+                      hasValue: exactWarning != null,
+                      icon: Icons.alarm,
+                      onClear: () => setDs(() => exactWarning = null),
+                      onPick: () async {
+                        final date = await showDatePicker(
+                          context: ctx,
+                          initialDate: exactWarning ?? DateTime.now(),
+                          firstDate: DateTime(2020), lastDate: DateTime(2100),
+                        );
+                        if (date == null) return;
+                        if (!ctx.mounted) return;
+                        final time = await showTimePicker(
+                          context: ctx,
+                          initialTime: exactWarning != null
+                              ? TimeOfDay(
+                                  hour: exactWarning!.hour,
+                                  minute: exactWarning!.minute)
+                              : TimeOfDay.now(),
+                        );
+                        if (time == null) return;
+                        setDs(() => exactWarning = DateTime(
+                            date.year, date.month, date.day,
+                            time.hour, time.minute));
+                      },
+                    ),
+                  ],
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Builder(builder: (_) {
+                      final w = effectiveWarning();
+                      final String text;
+                      Color color = Colors.grey.shade700;
+                      if (mode == _AlertMode.lead && leadMin <= 0) {
+                        text = '⚠️  Introdu un interval mai mare de 0.';
+                        color = Colors.orange.shade700;
+                      } else if (w == null) {
+                        text = mode == _AlertMode.none
+                            ? 'Nu se trimite nicio alertă.'
+                            : 'Alertă: nesetată';
+                      } else if (!w.isAfter(DateTime.now())) {
+                        text = '⚠️  Momentul alertei (${_formatDateTime(w)}) '
+                            'a trecut deja — nu se mai trimite.';
+                        color = Colors.orange.shade700;
+                      } else if (item.expiresAt != null &&
+                          w.isAfter(item.expiresAt!)) {
+                        text = '⚠️  Alerta este setată după data de plecare.';
+                        color = Colors.orange.shade700;
+                      } else {
+                        text = 'Alerta pleacă la: ${_formatDateTime(w)}';
+                      }
+                      return Text(text,
+                          style: TextStyle(fontSize: 12, color: color));
+                    }),
+                  ),
+                  if (mode == _AlertMode.lead && expiresAt != null)
                     Padding(
-                      padding: const EdgeInsets.only(top: 8),
+                      padding: const EdgeInsets.only(top: 4),
                       child: Text(
-                        '⚠️  Alerta este setată după data de expirare.',
+                        'Intervalul (înainte de sosire) se folosește automat '
+                        'la toate rezervările noi din acest tabel.',
                         style: TextStyle(
-                            color: Colors.orange.shade700, fontSize: 12),
+                            fontSize: 11, color: Colors.grey.shade500),
                       ),
                     ),
                   const SizedBox(height: 16),
@@ -2364,6 +2598,8 @@ class _ManagementPageState extends State<ManagementPage>
             ),
             FilledButton(
               onPressed: () {
+                if (mode == _AlertMode.lead && leadMin <= 0) return;
+                final warning = effectiveWarning();
                 final p1  = phone1Ctrl.text.trim();
                 final p2  = phone2Ctrl.text.trim();
                 final p3  = phone3Ctrl.text.trim();
@@ -2371,8 +2607,8 @@ class _ManagementPageState extends State<ManagementPage>
                 if (idx != -1) {
                   setState(() {
                     _items[idx] = item.copyWith(
-                      warningAt:    selectedWarning,
-                      clearWarning: selectedWarning == null,
+                      warningAt:    warning,
+                      clearWarning: warning == null,
                       phoneNumber:  p1.isNotEmpty ? p1 : null, clearPhone:  p1.isEmpty,
                       phoneNumber2: p2.isNotEmpty ? p2 : null, clearPhone2: p2.isEmpty,
                       phoneNumber3: p3.isNotEmpty ? p3 : null, clearPhone3: p3.isEmpty,
@@ -2389,6 +2625,13 @@ class _ManagementPageState extends State<ManagementPage>
     );
 
     if (confirmed == true) {
+      // Intervalul ales devine implicit pentru programările noi ale tabelului.
+      if (mode == _AlertMode.lead && expiresAt != null &&
+          leadMin != _alertLeadMin) {
+        _alertLeadMin = leadMin;
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setInt(_alertLeadKeyFor(_activeBoardId), leadMin);
+      }
       final updated = _items.firstWhere(
           (e) => e.number == item.number, orElse: () => item);
       await NotificationService.scheduleFor(updated,
@@ -3156,6 +3399,33 @@ class _ManagementPageState extends State<ManagementPage>
                             child: const Text('Rezolvă'),
                           ),
                           onTap: _showSmsBlockedDialog,
+                        ),
+                      ),
+                    ),
+                  if (_autostartBlocked)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Material(
+                        color: Colors.orange.shade50,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          side: BorderSide(color: Colors.orange.shade300),
+                        ),
+                        child: ListTile(
+                          leading: Icon(Icons.power_settings_new,
+                              color: Colors.orange.shade900),
+                          title: Text('Activează „Pornire automată”',
+                              style: TextStyle(
+                                  color: Colors.orange.shade900,
+                                  fontWeight: FontWeight.w600)),
+                          subtitle: const Text(
+                              'Fără ea, cu aplicația închisă, botul nu răspunde '
+                              'la SMS-uri și sincronizarea nu primește nimic.'),
+                          trailing: TextButton(
+                            onPressed: SmsService.openAutostartSettings,
+                            child: const Text('Activează'),
+                          ),
+                          onTap: SmsService.openAutostartSettings,
                         ),
                       ),
                     ),

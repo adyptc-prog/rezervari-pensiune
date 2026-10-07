@@ -192,5 +192,82 @@ void main() {
     // Și tabelul activ.
     expect(jsonDecode(prefs.getString('sms_alarm_110')!)['message'], 'Nou: Client 1');
   });
-}
 
+  test('autoWarningFor: intervalul înainte de sosire, null dacă a trecut', () {
+    final now = DateTime(2030, 1, 1, 10, 0);
+    final exp = DateTime(2030, 1, 1, 12, 0);
+    expect(autoWarningFor(exp, 90, now: now), DateTime(2030, 1, 1, 10, 30));
+    expect(autoWarningFor(exp, 180, now: now), isNull);
+    expect(autoWarningFor(null, 60, now: now), isNull);
+    expect(autoWarningFor(exp, 0, now: now), isNull);
+  });
+
+  test('formatAlertLead', () {
+    expect(formatAlertLead(15), '15 min');
+    expect(formatAlertLead(60), '1 oră');
+    expect(formatAlertLead(120), '2 ore');
+    expect(formatAlertLead(90), '1h 30min');
+    expect(formatAlertLead(1440), '1 zi');
+  });
+
+  testWidgets('rezervarea prin bot fără alertă primește intervalul tabelului',
+      (tester) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('alert_lead_minutes_b1', 45);
+    queue.add({'id': 'q1', 'board': 'b1', 'msg': 'PEN:A:${jsonEncode({
+          's': 'botw',
+          'n': '+40755555555',
+          'c': '2030-01-01T10:00',
+          'st': '2030-01-05T14:00',
+          'e': '2030-01-06T11:00',
+          'p1': '+40755555555',
+          'b': true,
+        })}'});
+    // Rezervare de la partener fără alertă: rămâne fără (nu e a botului).
+    queue.add({'id': 'q2', 'board': 'b1', 'msg': 'PEN:A:${jsonEncode({
+          's': 'part',
+          'n': 'Partener',
+          'c': '2030-01-06T10:00',
+          'e': '2030-01-06T10:30',
+        })}'});
+
+    await tester.pumpWidget(const ManagementApp());
+    await settle(tester);
+
+    final items = jsonDecode(prefs.getString('management_items_b1')!) as List;
+    final bot = items.firstWhere((i) => i['syncId'] == 'botw');
+    expect(DateTime.parse(bot['warningAt'] as String),
+        DateTime(2030, 1, 5, 13, 15)); // 45 min înainte de sosire
+    expect(lastSmsOp(410), 'schedule');
+    expect(items.firstWhere((i) => i['syncId'] == 'part')['warningAt'], isNull);
+  });
+
+  testWidgets('intervalul ales în „Setează alertă” devine implicit pe tabel',
+      (tester) async {
+    tester.view.physicalSize = const Size(1600, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(const ManagementApp());
+    await settle(tester);
+
+    await tester.tap(find.byTooltip('Setează alertă & SMS').first);
+    await settle(tester);
+    // Client 1 are alerta cu 1 oră înainte — preselectată.
+    expect(
+        tester.widget<ChoiceChip>(
+            find.widgetWithText(ChoiceChip, '1 oră înainte')).selected,
+        isTrue);
+    await tester.tap(find.text('2 ore înainte'));
+    await settle(tester);
+    expect(find.text('Alerta pleacă la: 01.01.2030 10:00'), findsOneWidget);
+    await tester.tap(find.text('Salvează'));
+    await settle(tester);
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getInt('alert_lead_minutes_b1'), 120);
+    final items = jsonDecode(prefs.getString('management_items_b1')!) as List;
+    expect(DateTime.parse(items.first['warningAt'] as String),
+        DateTime(2030, 1, 1, 10, 0));
+  });
+}
