@@ -76,9 +76,12 @@ void main() {
     await tester.pumpWidget(const ManagementApp());
     await settle(tester);
 
-    // SMS primul, apoi bateria — niciodată două dialoguri deodată.
+    // SMS, notificări, alarme exacte, apoi bateria — niciodată două
+    // dialoguri deodată.
     expect(requests, [
       [Permission.sms.value],
+      [Permission.notification.value],
+      [Permission.scheduleExactAlarm.value],
       [Permission.ignoreBatteryOptimizations.value],
     ]);
     expect(maxInFlight, 1);

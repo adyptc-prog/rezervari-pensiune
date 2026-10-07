@@ -44,7 +44,7 @@ class SmsAlarmReceiver : BroadcastReceiver() {
 
                 // Nu ștergem cheia din SharedPreferences din receiver:
                 // evităm accesul concurent cu Flutter care poate provoca crash
-                // Cheia va fi curățată de Dart la próxima reprogramare / ștergere
+                // Cheia va fi curățată de Dart la următoarea reprogramare / ștergere
             } catch (_: Exception) {
                 // Erorile sunt silențioase pentru a nu crash-ui procesul
             } finally {

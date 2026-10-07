@@ -24,7 +24,7 @@ class DiagTest {
         SmsSender.testSink = null
     }
 
-    private fun logText() = ShadowLog.getLogsForTag("OrgDiag").joinToString("\n") { it.msg }
+    private fun logText() = ShadowLog.getLogsForTag("PenDiag").joinToString("\n") { it.msg }
 
     @Test
     fun `numerele de telefon sunt mascate`() {
