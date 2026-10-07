@@ -3,7 +3,7 @@ package com.example.management_app
 import android.util.Log
 
 /**
- * Jurnalul de diagnostic al aplicației ("OrgDiag").
+ * Jurnalul de diagnostic al aplicației ("PenDiag").
  *
  * - Mesajele informative/avertismentele apar doar în build-ul debug.
  * - Erorile apar și în release (necesare la depanare), dar fără date
@@ -11,7 +11,7 @@ import android.util.Log
  *   SMS-urilor nu se scrie deloc.
  */
 object Diag {
-    private const val TAG = "OrgDiag"
+    private const val TAG = "PenDiag"
 
     // Doar testele îl schimbă.
     @Volatile

@@ -739,7 +739,7 @@ class ClientBookingReceiver : BroadcastReceiver() {
         val candidates = findActiveBookings(context, senderDigits)
         when {
             candidates.isEmpty() ->
-                sendSms(context, sender, "Nu am găsit nicio programare activă pe acest număr.")
+                sendSms(context, sender, "Nu am găsit nicio rezervare activă pe acest număr.")
             candidates.size == 1 -> {
                 clearCancelOffer(context, senderDigits)
                 cancelBooking(context, sender, candidates[0])
@@ -757,7 +757,7 @@ class ClientBookingReceiver : BroadcastReceiver() {
                 val lines = candidates.mapIndexed { i, c -> "${i + 1}. ${c.label}" }
                 sendSms(
                     context, sender,
-                    "Ai mai multe programări active:\n${lines.joinToString("\n")}\n" +
+                    "Ai mai multe rezervări active:\n${lines.joinToString("\n")}\n" +
                         "Răspunde cu numărul celei pe care vrei să o anulezi."
                 )
             }
@@ -803,7 +803,7 @@ class ClientBookingReceiver : BroadcastReceiver() {
         // neplată” peste câteva ore.
         AlarmScheduler.cancelValidationAlarm(context, AlarmScheduler.validationAlarmId(candidate.syncId))
         BotReminders.cancel(context, candidate.syncId)
-        sendSms(context, sender, "Programarea ta ${candidate.label} a fost anulată.")
+        sendSms(context, sender, "Rezervarea ta ${candidate.label} a fost anulată.")
         OwnerNotice.show(
             context, "Rezervare anulată de client",
             "${candidate.label} — anulată prin SMS de clientul cu numărul ${Diag.mask(sender)}.",
