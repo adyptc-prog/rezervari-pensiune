@@ -2,6 +2,8 @@ package com.example.management_app
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -11,9 +13,9 @@ class BotLimitsTest {
     private val hour = 60L * 60L * 1000L
 
     @Test
-    fun `un numar poate trimite cel mult 10 comenzi pe ora`() {
+    fun `un numar poate trimite cel mult MAX comenzi pe ora`() {
         val state = JSONObject()
-        repeat(10) {
+        repeat(BotLimits.MAX_COMMANDS_PER_NUMBER_PER_HOUR) {
             assertEquals(BotLimits.Decision.ALLOW, BotLimits.register(state, "0712345678", 1000L + it, "2026-10-06"))
         }
         assertEquals(BotLimits.Decision.NUMBER_LIMIT, BotLimits.register(state, "0712345678", 2000L, "2026-10-06"))
@@ -24,7 +26,7 @@ class BotLimitsTest {
     @Test
     fun `limita pe numar expira dupa o ora`() {
         val state = JSONObject()
-        repeat(10) { BotLimits.register(state, "0712345678", 1000L, "2026-10-06") }
+        repeat(BotLimits.MAX_COMMANDS_PER_NUMBER_PER_HOUR) { BotLimits.register(state, "0712345678", 1000L, "2026-10-06") }
         assertEquals(BotLimits.Decision.ALLOW, BotLimits.register(state, "0712345678", 1000L + hour, "2026-10-06"))
     }
 
@@ -42,7 +44,7 @@ class BotLimitsTest {
     @Test
     fun `comenzile respinse nu prelungesc blocarea`() {
         val state = JSONObject()
-        repeat(10) { BotLimits.register(state, "0712345678", 0L, "2026-10-06") }
+        repeat(BotLimits.MAX_COMMANDS_PER_NUMBER_PER_HOUR) { BotLimits.register(state, "0712345678", 0L, "2026-10-06") }
         repeat(50) { BotLimits.register(state, "0712345678", hour / 2, "2026-10-06") }
         assertEquals(BotLimits.Decision.ALLOW, BotLimits.register(state, "0712345678", hour, "2026-10-06"))
     }
@@ -71,5 +73,26 @@ class BotLimitsTest {
         assertTrue(BotLimits.canBookMore(0))
         assertTrue(BotLimits.canBookMore(1))
         assertFalse(BotLimits.canBookMore(2))
+    }
+
+    @Test
+    fun `explicatia la limita vine o data pe ora si spune cand se deblocheaza`() {
+        val state = JSONObject()
+        val hour = 60L * 60L * 1000L
+        repeat(BotLimits.MAX_COMMANDS_PER_NUMBER_PER_HOUR) {
+            BotLimits.register(state, "0712345678", 1000L + it, "2026-10-06")
+        }
+        assertEquals(BotLimits.Decision.NUMBER_LIMIT, BotLimits.register(state, "0712345678", 5000L, "2026-10-06"))
+        assertEquals(1000L + hour, BotLimits.limitNotice(state, "0712345678", 5000L))
+        assertNull(BotLimits.limitNotice(state, "0712345678", 6000L))
+        // După o oră se poate explica din nou.
+        assertNotNull(BotLimits.limitNotice(state, "0712345678", 5000L + hour))
+    }
+
+    @Test
+    fun `explicatia nu trece peste plafonul zilnic`() {
+        val state = JSONObject().put("day", "2026-10-06").put("dayCount", BotLimits.MAX_REPLIES_PER_DAY)
+            .put("perNumber", JSONObject().put("0712345678", org.json.JSONArray().put(1000L)))
+        assertNull(BotLimits.limitNotice(state, "0712345678", 2000L))
     }
 }
