@@ -84,6 +84,15 @@ object BookingSettings {
         return result
     }
 
+    // Cu câte minute înainte de expirare vine alerta — ultima valoare aleasă
+    // în aplicație („Setează alertă”), aceeași regulă ca _loadAlertLead din Dart.
+    const val DEFAULT_ALERT_LEAD_MIN = 60
+
+    fun loadAlertLeadMin(context: Context, boardId: String): Int {
+        val v = getIntCompat(prefs(context), "flutter.alert_lead_minutes_$boardId", 0)
+        return if (v > 0) v else DEFAULT_ALERT_LEAD_MIN
+    }
+
     private fun parseFlexibleIso(raw: String): LocalDateTime? = try {
         LocalDateTime.parse(raw)
     } catch (_: Exception) {
