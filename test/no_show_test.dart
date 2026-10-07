@@ -206,6 +206,29 @@ void main() {
       expect(sent, hasLength(kBoardCount));
     });
 
+    testWidgets('lista arată clienții blocați după pragul ales', (tester) async {
+      tester.view.physicalSize = const Size(1600, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final prefs = await SharedPreferences.getInstance();
+
+      await tester.pumpWidget(const ManagementApp());
+      await settle(tester);
+      await tester.tap(find.byTooltip('Clienți cu neprezentări'));
+      await settle(tester);
+      // Implicit pragul e 3 — cu 2 bile clientul nu e blocat.
+      expect(find.textContaining('blocat la rezervări prin SMS'), findsNothing);
+      await tester.tap(find.text('Închide'));
+      await settle(tester);
+
+      await prefs.setInt(kNoShowThresholdKey, 2);
+      await tester.pumpWidget(const ManagementApp(key: ValueKey('again')));
+      await settle(tester);
+      await tester.tap(find.byTooltip('Clienți cu neprezentări'));
+      await settle(tester);
+      expect(find.textContaining('blocat la rezervări prin SMS'), findsOneWidget);
+    });
+
     testWidgets('iertarea primită de la partener se aplică', (tester) async {
       queue.add({
         'id': 'q1',

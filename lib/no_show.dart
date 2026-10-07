@@ -18,6 +18,14 @@ const kNoShowWindow = Duration(days: 180);
 const kNoShowResetsKey  = 'no_show_resets';  // {cheie: ISO} — iertări
 const kNoShowSummaryKey = 'no_show_summary'; // {cheie: [ISO]} — citit și nativ
 
+/// Pragul de blocare a rezervărilor prin SMS (0 = niciodată) — citit și de
+/// botul nativ (NoShowStore.kt).
+const kNoShowThresholdKey = 'no_show_block_threshold';
+const kDefaultNoShowThreshold = 3;
+const kNoShowThresholdOptions = [0, 2, 3, 4, 5];
+
+bool isBlockedBy(int count, int threshold) => threshold > 0 && count >= threshold;
+
 /// Ultimele 9 cifre ale telefonului; '' dacă are prea puține ca să fie sigur.
 String clientKey(String? phone) {
   final digits = (phone ?? '').replaceAll(RegExp(r'\D'), '');

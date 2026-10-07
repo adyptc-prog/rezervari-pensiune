@@ -1118,6 +1118,7 @@ class _ManagementPageState extends State<ManagementPage>
   DateTime? _attendanceSince;
   // Neprezentările active (6 luni), pe client — din toate tabelele.
   Map<String, NoShowRecord> _noShows = {};
+  int _noShowBlockThreshold = kDefaultNoShowThreshold;
 
   // Înainte ca _loadData să termine încărcarea inițială, _boards e încă gol
   // (Scaffold-ul cu spinner se construiește imediat) — nu explodăm în acel caz.
@@ -1558,6 +1559,8 @@ class _ManagementPageState extends State<ManagementPage>
         // Date corupte într-un tabel — nu blocăm restul.
       }
     }
+    _noShowBlockThreshold =
+        prefs.getInt(kNoShowThresholdKey) ?? kDefaultNoShowThreshold;
     final result = computeNoShows(
         sources, decodeResets(prefs.getString(kNoShowResetsKey)));
     await prefs.setString(kNoShowSummaryKey, jsonEncode({
@@ -1610,7 +1613,8 @@ class _ManagementPageState extends State<ManagementPage>
                       children: [
                         Text(
                           'Neprezentările din ultimele 6 luni. O bilă dispare '
-                          'singură după 6 luni.',
+                          'singură după 6 luni.'
+                          '${_noShowBlockThreshold > 0 ? ' La $_noShowBlockThreshold bile, clientul nu mai poate rezerva prin SMS.' : ''}',
                           style: TextStyle(
                               fontSize: 12, color: Colors.grey.shade600),
                         ),
@@ -1633,7 +1637,12 @@ class _ManagementPageState extends State<ManagementPage>
                               ],
                             ),
                             subtitle: Text(
-                                'Ultima: ${_formatDateTime(r.last)}'),
+                              'Ultima: ${_formatDateTime(r.last)}'
+                              '${isBlockedBy(r.count, _noShowBlockThreshold) ? ' · blocat la rezervări prin SMS' : ''}',
+                              style: isBlockedBy(r.count, _noShowBlockThreshold)
+                                  ? TextStyle(color: Colors.red.shade700)
+                                  : null,
+                            ),
                             trailing: TextButton(
                               onPressed: () async {
                                 final ok = await showDialog<bool>(
@@ -3039,6 +3048,7 @@ class _ManagementPageState extends State<ManagementPage>
     const dayLabels = {
       1: 'L', 2: 'Ma', 3: 'Mi', 4: 'J', 5: 'V', 6: 'S', 7: 'D',
     };
+    var blockThreshold = _noShowBlockThreshold;
 
     final saved = await showDialog<bool>(
       context: context,
@@ -3064,7 +3074,7 @@ class _ManagementPageState extends State<ManagementPage>
                   // Trebuie să rămână la fel ca BotLimits.kt.
                   const Text(
                     'Protecție anti-abuz: botul răspunde doar numerelor de '
-                    'telefon, cel mult 10 mesaje pe oră de la același număr '
+                    'telefon, cel mult 15 mesaje pe oră de la același număr '
                     'și 100 de răspunsuri pe zi; un client poate avea cel '
                     'mult 2 rezervări active.',
                     style: TextStyle(fontSize: 11, color: Colors.black45),
@@ -3076,6 +3086,32 @@ class _ManagementPageState extends State<ManagementPage>
                     value: enabled,
                     onChanged: (v) => setDs(() => enabled = v),
                   ),
+                  const SizedBox(height: 4),
+                  const Text('Blochează rezervările prin SMS după',
+                      style: TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    children: [
+                      for (final n in kNoShowThresholdOptions)
+                        ChoiceChip(
+                          label: Text(n == 0 ? 'Niciodată' : '$n neprezentări'),
+                          selected: blockThreshold == n,
+                          onSelected: (_) => setDs(() => blockThreshold = n),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    blockThreshold == 0
+                        ? 'Clienții cu neprezentări pot rezerva în continuare.'
+                        : 'Pentru toți clienții pensiunii, pe toate tabelele. '
+                            'Clientul blocat poate fi rezervat manual și '
+                            'iertat din lista „Clienți cu neprezentări”.',
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                  ),
+                  const SizedBox(height: 8),
                   const SizedBox(height: 8),
                   Row(
                     children: [
@@ -3190,8 +3226,13 @@ class _ManagementPageState extends State<ManagementPage>
       closedDays: closedDays,
       iban: ibanCtrl.text.trim(),
     );
-    setState(() => _bookingSettings = updated);
+    setState(() {
+      _bookingSettings = updated;
+      _noShowBlockThreshold = blockThreshold;
+    });
     await _saveBookingSettings(_activeBoardId, updated);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(kNoShowThresholdKey, blockThreshold);
     await _recomputeFreeSlots();
   }
 
