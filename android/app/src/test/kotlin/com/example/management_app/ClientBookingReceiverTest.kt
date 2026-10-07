@@ -93,6 +93,44 @@ class ClientBookingReceiverTest {
     }
 
     @Test
+    fun `rezervarea e trimisa imediat partenerului, semnata, si marcata ca trimisa`() {
+        val partner = "+40799999999"
+        context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE).edit()
+            .putString("flutter.sync_partner_phone_b1", partner)
+            .putString("flutter.sync_secret_b1", "K7QM2XPA")
+            .commit()
+        receiver.handleMessage(context, client, "liber")
+        receiver.handleMessage(context, client, "2")
+        receiver.handleMessage(context, client, "1")
+
+        val entry = JSONArray(SmsSyncReceiver.snapshot(context)).getJSONObject(0)
+        assertTrue(entry.optBoolean("forwarded"))
+        val toPartner = sent.single { it.first == partner }.second
+        assertEquals(entry.getString("msg"), SyncAuth.verify("K7QM2XPA", toPartner))
+    }
+
+    @Test
+    fun `fara partener rezervarea ramane de trimis de aplicatie`() {
+        receiver.handleMessage(context, client, "liber")
+        receiver.handleMessage(context, client, "2")
+        receiver.handleMessage(context, client, "1")
+
+        val entry = JSONArray(SmsSyncReceiver.snapshot(context)).getJSONObject(0)
+        assertFalse(entry.optBoolean("forwarded"))
+    }
+
+    @Test
+    fun `anularea prin SMS il anunta pe proprietar`() {
+        queueFutureBooking("anul1", daysAhead = 5)
+        receiver.handleMessage(context, client, "anuleaza")
+
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val titles = org.robolectric.Shadows.shadowOf(nm).allNotifications
+            .map { it.extras.getString(android.app.Notification.EXTRA_TITLE) }
+        assertEquals(listOf("Rezervare anulată de client"), titles)
+    }
+
+    @Test
     fun `un numar fara lista activa e un SMS personal - fara raspuns`() {
         receiver.handleMessage(context, client, "2")
         receiver.handleMessage(context, client, "10")

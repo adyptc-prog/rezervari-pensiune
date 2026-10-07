@@ -687,6 +687,8 @@ class SyncService {
               // Intrările scrise de versiuni vechi nu au „origin” — le
               // tratăm ca venite de la partener (nu le retrimitem).
               fromPartner: e['origin'] != 'local',
+              // Trimisă deja partenerului de partea nativă.
+              forwarded: e['forwarded'] == true,
             );
           })
           .whereType<SyncQueueEntry>()
@@ -737,8 +739,12 @@ class Item {
   // Prezența la programare, confirmată de salon după ora de final:
   // null = neconfirmată, 'came' = a venit, 'noShow' = nu a venit.
   final String? attendance;
-  // „Nu a venit” pus automat (neconfirmată în 24h), nu de salon.
+  // „Nu a venit” pus automat (neconfirmată în 24h), nu de pensiune.
   final bool attendanceAuto;
+  // Ultima modificare făcută din aplicație (pe oricare telefon). La
+  // sincronizare, o versiune mai veche decât cea locală e ignorată — SMS-urile
+  // pot sosi în altă ordine decât au fost trimise.
+  final DateTime? updatedAt;
 
   const Item({
     required this.syncId,
@@ -756,6 +762,7 @@ class Item {
     this.viaBot = false,
     this.attendance,
     this.attendanceAuto = false,
+    this.updatedAt,
   });
 
   // Telefonul după care e recunoscut clientul (neprezentări).
@@ -790,6 +797,7 @@ class Item {
     String? attendance,
     bool clearAttendance = false,
     bool? attendanceAuto,
+    DateTime? updatedAt,
   }) {
     return Item(
       syncId:       syncId       ?? this.syncId,
@@ -809,6 +817,7 @@ class Item {
       attendanceAuto: clearAttendance
           ? false
           : (attendanceAuto ?? (attendance != null ? false : this.attendanceAuto)),
+      updatedAt:    updatedAt ?? this.updatedAt,
     );
   }
 
@@ -829,6 +838,7 @@ class Item {
         'viaBot':       viaBot,
         'attendance':   attendance,
         if (attendanceAuto) 'attendanceAuto': true,
+        if (updatedAt != null) 'updatedAt': updatedAt!.toIso8601String(),
       };
 
   factory Item.fromJson(Map<String, dynamic> json) => Item(
@@ -852,6 +862,8 @@ class Item {
         viaBot:       json['viaBot'] as bool? ?? false,
         attendance:   json['attendance'] as String?,
         attendanceAuto: json['attendanceAuto'] == true,
+        updatedAt: json['updatedAt'] != null
+            ? DateTime.tryParse(json['updatedAt'] as String) : null,
       );
 
   // Format compact pentru SMS (câmpuri opționale omise dacă sunt goale/null)
@@ -870,6 +882,7 @@ class Item {
         if (viaBot) 'b': true,
         if (attendance == kCame) 'a': 'c',
         if (attendance == kNoShow) 'a': 'n',
+        if (updatedAt != null) 'u': updatedAt!.millisecondsSinceEpoch,
       };
 
   factory Item.fromSyncJson(Map<String, dynamic> j) => Item(
@@ -887,7 +900,15 @@ class Item {
         validated:    j['v'] == true,
         viaBot:       j['b'] == true,
         attendance:   switch (j['a']) { 'c' => kCame, 'n' => kNoShow, _ => null },
+        updatedAt: j['u'] is int
+            ? DateTime.fromMillisecondsSinceEpoch(j['u'] as int) : null,
       );
+
+  /// [incoming] e o versiune mai veche decât aceasta (ambele cu marcaj).
+  bool isNewerThan(Item incoming) =>
+      updatedAt != null &&
+      incoming.updatedAt != null &&
+      incoming.updatedAt!.isBefore(updatedAt!);
 }
 
 // ─── Buffer înregistrări șterse (6 luni) ─────────────────────────────────────
@@ -914,7 +935,14 @@ class DeletedItem {
 // fromPartner: mesajul a venit de la partenerul de sincronizare (nu se
 // retrimite). Altfel e o schimbare locală făcută nativ (botul de rezervări,
 // anularea automată) pe care partenerul trebuie s-o primească.
-typedef SyncQueueEntry = ({String id, String boardId, String msg, bool fromPartner});
+// forwarded: schimbarea locală a fost deja trimisă partenerului nativ.
+typedef SyncQueueEntry = ({
+  String id,
+  String boardId,
+  String msg,
+  bool fromPartner,
+  bool forwarded,
+});
 
 typedef ReportEntry = ({Item item, DateTime? deletedAt});
 
@@ -1442,8 +1470,12 @@ class _ManagementPageState extends State<ManagementPage>
     switch (state) {
       case AppLifecycleState.resumed:
         _startColorTimer();
-        _startSyncQueueTimer();
-        _processSyncQueue();
+        // Selectorul de fișier al restaurării scoate aplicația din prim-plan —
+        // la revenire nu repornim coada cât timp restaurarea rulează.
+        if (!_restoring) {
+          _startSyncQueueTimer();
+          _processSyncQueue();
+        }
         _refreshLicense();
         _checkSmsPermission();
         _checkSmsFailure();
@@ -1524,6 +1556,14 @@ class _ManagementPageState extends State<ManagementPage>
     }
     await _refreshNoShows();
     unawaited(_applyAutoNoShows());
+  }
+
+  // Marchează o modificare locală (vezi Item.updatedAt) și o întoarce.
+  Item _touch(Item item) {
+    final idx = _items.indexWhere((e) => e.syncId == item.syncId);
+    final touched = item.copyWith(updatedAt: DateTime.now());
+    if (idx != -1) _items[idx] = touched;
+    return touched;
   }
 
   // Datele demonstrative ale versiunilor vechi ocupau zile reale în calculul
@@ -1788,7 +1828,7 @@ class _ManagementPageState extends State<ManagementPage>
   bool _syncQueueBusy = false;
 
   Future<void> _processSyncQueue() async {
-    if (_loading || _syncQueueBusy) return;
+    if (_loading || _syncQueueBusy || _restoring) return;
     _syncQueueBusy = true;
     // Marcarea automată a neprezentărilor scrie aceleași date — o așteptăm.
     while (_autoNoShowBusy) {
@@ -1821,7 +1861,7 @@ class _ManagementPageState extends State<ManagementPage>
       // ajung doar în coada acestui telefon — le trimitem și partenerului,
       // altfel tabelul de pe celălalt telefon nu le vede niciodată.
       for (final e in entries) {
-        if (e.fromPartner || e.msg.isEmpty) continue;
+        if (e.fromPartner || e.forwarded || e.msg.isEmpty) continue;
         final boardId = e.boardId.isEmpty ? 'b1' : e.boardId;
         if (!_boards.any((b) => b.id == boardId)) continue;
         await SyncService.sendToBoardPartner(boardId, e.msg);
@@ -1880,6 +1920,15 @@ class _ManagementPageState extends State<ManagementPage>
         becameNoShow.add(incoming);
       }
     }
+    // SMS-urile pot sosi în altă ordine: o adăugare/modificare întârziată nu
+    // readuce o rezervare ștearsă (bufferul de șterse ține minte 6 luni) și
+    // nu suprascrie o modificare locală mai nouă.
+    bool isStale(int idx, Item incoming) {
+      if (idx == -1) {
+        return deletedBuffer.any((d) => d.item.syncId == incoming.syncId);
+      }
+      return items[idx].isNewerThan(incoming);
+    }
     for (final msg in messages) {
       try {
         if (msg.startsWith('PEN:A:') || msg.startsWith('PEN:I:')) {
@@ -1894,6 +1943,7 @@ class _ManagementPageState extends State<ManagementPage>
             if (w != null) incoming = incoming.copyWith(warningAt: w);
           }
           final idx = items.indexWhere((e) => e.syncId == incoming.syncId);
+          if (isStale(idx, incoming)) continue;
           trackNoShow(idx == -1 ? null : items[idx], incoming);
           if (idx == -1) {
             items.add(incoming.copyWith(number: nextNumber++));
@@ -1905,6 +1955,7 @@ class _ManagementPageState extends State<ManagementPage>
           final j = jsonDecode(msg.substring(6)) as Map<String, dynamic>;
           final incoming = Item.fromSyncJson(j);
           final idx = items.indexWhere((e) => e.syncId == incoming.syncId);
+          if (isStale(idx, incoming)) continue;
           trackNoShow(idx == -1 ? null : items[idx], incoming);
           if (idx != -1) {
             items[idx] = incoming.copyWith(number: items[idx].number);
@@ -1996,9 +2047,19 @@ class _ManagementPageState extends State<ManagementPage>
   // Coada de sincronizare scrie în SharedPreferences din fundal — oprită pe
   // durata restaurării, ca să nu suprascrie datele abia restaurate cu cele
   // vechi din cache-ul Dart.
+  // Pe toată durata restaurării nimic din Dart nu mai scrie datele (coada,
+  // neprezentările automate) — altfel cache-ul vechi ar suprascrie datele
+  // abia restaurate.
+  bool _restoring = false;
+
   Future<void> _pauseSyncForRestore() async {
+    _restoring = true;
     _syncQueueTimer?.cancel();
     _syncQueueTimer = null;
+    // O procesare deja pornită își termină scrierile înainte de restaurare.
+    while (_syncQueueBusy || _autoNoShowBusy) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
   }
 
   // Restaurarea înlocuiește datele nativ — cache-ul SharedPreferences din Dart
@@ -2007,6 +2068,7 @@ class _ManagementPageState extends State<ManagementPage>
   Future<void> _reloadAfterRestore(bool success) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.reload();
+    _restoring = false;
     if (mounted) {
       setState(() {
         _loading = true;
@@ -2694,15 +2756,16 @@ class _ManagementPageState extends State<ManagementPage>
     if (saved == true) {
       Item? changedItem;
       if (isEdit) {
-        changedItem = _items.firstWhere(
-            (e) => e.number == existing.number, orElse: () => existing);
+        changedItem = _touch(_items.firstWhere(
+            (e) => e.number == existing.number, orElse: () => existing));
         await NotificationService.scheduleFor(changedItem,
             boardIndex: _activeBoardIndex);
         await SmsService.scheduleFor(changedItem,
             template: _smsTemplate, boardIndex: _activeBoardIndex);
         await SyncService.sendUpdate(changedItem);
       } else if (_items.isNotEmpty) {
-        changedItem = _items.reduce((a, b) => a.number > b.number ? a : b);
+        changedItem =
+            _touch(_items.reduce((a, b) => a.number > b.number ? a : b));
         await NotificationService.scheduleFor(changedItem,
             boardIndex: _activeBoardIndex);
         await SmsService.scheduleFor(changedItem,
@@ -3007,8 +3070,8 @@ class _ManagementPageState extends State<ManagementPage>
         final prefs = await SharedPreferences.getInstance();
         await prefs.setInt(_alertLeadKeyFor(_activeBoardId), leadMin);
       }
-      final updated = _items.firstWhere(
-          (e) => e.number == item.number, orElse: () => item);
+      final updated = _touch(_items.firstWhere(
+          (e) => e.number == item.number, orElse: () => item));
       await NotificationService.scheduleFor(updated,
           boardIndex: _activeBoardIndex);
       await SmsService.scheduleFor(updated,
@@ -3126,7 +3189,8 @@ class _ManagementPageState extends State<ManagementPage>
       );
       if (confirmed != true || !mounted) return;
     }
-    final updated = item.copyWith(validated: newValidated);
+    final updated =
+        item.copyWith(validated: newValidated, updatedAt: DateTime.now());
     setState(() => _items[idx] = updated);
     await _saveItems();
     await SyncService.sendUpdate(updated);
@@ -3555,8 +3619,8 @@ class _ManagementPageState extends State<ManagementPage>
     final idx = _items.indexWhere((e) => e.syncId == item.syncId);
     if (idx == -1) return;
     final updated = value == null
-        ? _items[idx].copyWith(clearAttendance: true)
-        : _items[idx].copyWith(attendance: value);
+        ? _items[idx].copyWith(clearAttendance: true, updatedAt: DateTime.now())
+        : _items[idx].copyWith(attendance: value, updatedAt: DateTime.now());
     final before = _items[idx];
     setState(() => _items[idx] = updated);
     await _saveItems();
@@ -3574,7 +3638,11 @@ class _ManagementPageState extends State<ManagementPage>
   bool _autoNoShowBusy = false;
 
   Future<void> _applyAutoNoShows() async {
-    if (_loading || _autoNoShowBusy || _syncQueueBusy || _attendanceSince == null) {
+    if (_loading ||
+        _autoNoShowBusy ||
+        _syncQueueBusy ||
+        _restoring ||
+        _attendanceSince == null) {
       return;
     }
     _autoNoShowBusy = true;
