@@ -164,8 +164,11 @@ class ClientBookingReceiver : BroadcastReceiver() {
         val bookingOffer = getOffer(context, senderDigits)
         val cancelOffer  = getCancelOffer(context, senderDigits)
         val hasActiveList = nightsOffer != null || bookingOffer != null || cancelOffer != null
-        val numberMatch = NUMBER_RE.find(body)
-            ?: if (hasActiveList) LOOSE_NUMBER_RE.find(body) else null
+        // Un număr are sens doar ca răspuns la o listă trimisă de bot — altfel
+        // e un SMS personal („2”, „10”) și nu primește răspuns (plătit).
+        val numberMatch = if (hasActiveList || hadRecentList(context, senderDigits)) {
+            NUMBER_RE.find(body) ?: LOOSE_NUMBER_RE.find(body)
+        } else null
         Diag.i("handleMessage: liberMatch=${liberMatch != null} cancelMatch=${cancelMatch != null} numberMatch=${numberMatch != null} activeList=$hasActiveList")
 
         val isCommand = liberMatch != null || body == "next" || cancelMatch != null || numberMatch != null
@@ -245,6 +248,22 @@ class ClientBookingReceiver : BroadcastReceiver() {
                     else     -> confirmOffer(context, sender, senderDigits, choice)
                 }
             }
+        }
+    }
+
+    // A primit o listă în ultimele 24h (chiar dacă a expirat între timp): un
+    // număr trimis acum e un răspuns întârziat, care primește explicația
+    // „ofertă expirată” — nu un SMS personal.
+    private fun hadRecentList(context: Context, senderDigits: String): Boolean {
+        val prefs = bookingPrefs(context)
+        val now = System.currentTimeMillis()
+        return listOf(OFFERS_KEY, CANCEL_OFFERS_KEY, NIGHTS_OFFERS_KEY).any { key ->
+            val o = try {
+                JSONObject(prefs.getString(key, "{}") ?: "{}").optJSONObject(senderDigits)
+            } catch (_: Exception) {
+                null
+            }
+            o != null && now - o.optLong("ts", 0L) < DAY_MS
         }
     }
 

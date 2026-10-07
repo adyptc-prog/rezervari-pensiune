@@ -13,6 +13,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import java.time.LocalDateTime
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -34,16 +35,20 @@ class ValidationDeadlineReceiverTest {
         }
     }
 
-    private fun seedUnpaidBooking(syncId: String): Int {
+    private fun seedUnpaidBooking(
+        syncId: String,
+        // Implicit: check-in peste 2 zile (rezervare încă neîncepută).
+        startsAt: LocalDateTime = LocalDateTime.now().plusDays(2).withHour(14).withMinute(0),
+    ): Int {
         val alarmId = AlarmScheduler.validationAlarmId(syncId)
         val item = JSONObject()
             .put("syncId", syncId)
             .put("number", 1)
             .put("name", "Client")
             .put("description", "")
-            .put("createdAt", "2026-10-01T10:00:00.000")
-            .put("startsAt", "2026-10-10T14:00:00.000")
-            .put("expiresAt", "2026-10-12T11:00:00.000")
+            .put("createdAt", startsAt.minusDays(9).toString())
+            .put("startsAt", startsAt.toString())
+            .put("expiresAt", startsAt.plusDays(2).withHour(11).toString())
             .put("phoneNumber", "0712345678")
             .put("validated", false)
         context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE).edit()
@@ -94,5 +99,32 @@ class ValidationDeadlineReceiverTest {
         assertTrue(alarmId >= 0)
 
         assertEquals(listOf("PEN:D:$syncId"), fireAndWait(alarmId))
+    }
+
+    @Test
+    fun `sejurul deja inceput nu e anulat si clientul nu primeste SMS`() {
+        val sent = mutableListOf<String>()
+        SmsSender.testSink = { _, msg -> sent.add(msg) }
+        try {
+            val syncId = syncIdWithHashSign(negative = false)
+            val alarmId = seedUnpaidBooking(syncId, startsAt = LocalDateTime.now().minusDays(1))
+
+            assertEquals(emptyList<String>(), fireAndWait(alarmId))
+            assertEquals(emptyList<String>(), sent)
+        } finally {
+            SmsSender.testSink = null
+        }
+    }
+
+    @Test
+    fun `sejur viitor vs inceput`() {
+        val now = LocalDateTime.of(2026, 10, 8, 12, 0)
+        fun item(start: LocalDateTime?, end: LocalDateTime?) =
+            BookedItem("b1", "s", "", "", listOf("0712345678"), end, start, false)
+        assertTrue(ValidationDeadlineReceiver.stayIsInFuture(item(now.plusHours(1), now.plusDays(2)), now))
+        assertEquals(false, ValidationDeadlineReceiver.stayIsInFuture(item(now.minusHours(1), now.plusDays(2)), now))
+        // Fără check-in: o noapte înainte de check-out.
+        assertEquals(false, ValidationDeadlineReceiver.stayIsInFuture(item(null, now.plusHours(5)), now))
+        assertTrue(ValidationDeadlineReceiver.stayIsInFuture(item(null, now.plusDays(3)), now))
     }
 }

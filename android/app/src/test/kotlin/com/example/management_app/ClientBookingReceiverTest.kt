@@ -93,6 +93,29 @@ class ClientBookingReceiverTest {
     }
 
     @Test
+    fun `un numar fara lista activa e un SMS personal - fara raspuns`() {
+        receiver.handleMessage(context, client, "2")
+        receiver.handleMessage(context, client, "10")
+        assertNull(lastSent())
+    }
+
+    @Test
+    fun `raspunsul cu numar dupa expirarea listei primeste explicatia`() {
+        receiver.handleMessage(context, client, "liber")
+        receiver.handleMessage(context, client, "2")
+        // Lista de date a expirat (peste 20 de minute), dar e din aceeași zi.
+        val prefs = context.getSharedPreferences("ClientBookingPrefs", Context.MODE_PRIVATE)
+        val offers = JSONObject(prefs.getString("offers", "{}")!!)
+        val key = offers.keys().next()
+        offers.getJSONObject(key).put("ts", System.currentTimeMillis() - 60 * 60_000L)
+        prefs.edit().putString("offers", offers.toString()).commit()
+        clearSent()
+
+        receiver.handleMessage(context, client, "1")
+        assertTrue(lastSent()!!.startsWith("Nu am nicio ofertă activă"))
+    }
+
+    @Test
     fun `nu raspunde expeditorilor alfanumerici sau numerelor scurte`() {
         receiver.handleMessage(context, "BancaX", "liber")
         receiver.handleMessage(context, "1234", "liber")

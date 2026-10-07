@@ -101,6 +101,24 @@ bool needsAttendance(Item item, DateTime? since, {DateTime? now}) =>
     since != null &&
     item.expiresAt!.isAfter(since);
 
+// Datele demonstrative create la prima instalare de versiunile vechi
+// (moștenite din Organizator) — recunoscute după nume + data creării.
+const _kDemoItems = {
+  'Proiect Alpha': (2026, 1, 10, 9, 0),
+  'Raport lunar': (2026, 2, 1, 8, 30),
+  'Întâlnire echipă': (2026, 3, 15, 10, 0),
+  'Audit intern': (2026, 4, 5, 11, 0),
+  'Buget anual': (2026, 5, 20, 14, 0),
+};
+
+@visibleForTesting
+bool isDemoItem(Item item) {
+  final c = _kDemoItems[item.name];
+  return c != null &&
+      item.phones.isEmpty &&
+      item.createdAt == DateTime(c.$1, c.$2, c.$3, c.$4, c.$5);
+}
+
 // ─── Helper: ID unic stabil pentru sincronizare ───────────────────────────────
 String _generateSyncId() {
   final r = Random.secure();
@@ -454,6 +472,10 @@ class ValidationService {
       return;
     }
     final deadline = item.createdAt.add(const Duration(hours: 24));
+    // Termen deja trecut: alarma lui s-a declanșat (sau se va declanșa) deja.
+    // O reprogramare acum ar porni-o imediat și ar șterge o rezervare veche
+    // (ex. debifarea „validat”, o editare sau orice mesaj de sincronizare).
+    if (!deadline.isAfter(DateTime.now())) return;
     final id = _alarmId(item.syncId);
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -1486,25 +1508,13 @@ class _ManagementPageState extends State<ManagementPage>
     if (!mounted) return;
 
     if (loaded != null) {
+      final demo = loaded.where(isDemoItem).toList();
       setState(() {
-        _items.addAll(loaded!);
+        _items.addAll(loaded!.where((i) => !isDemoItem(i)));
         _nextNumber = nextNumber;
         _loading    = false;
       });
-    } else if (_activeBoardId == 'b1') {
-      // Date demonstrative — doar la prima instalare, doar pentru primul tabel.
-      setState(() {
-        _items.addAll([
-          Item(syncId: _generateSyncId(), number: 1, name: 'Proiect Alpha',    description: 'Proiect principal de dezvoltare',    createdAt: DateTime(2026, 1, 10,  9,  0), expiresAt: DateTime(2026, 7,  1, 18,  0)),
-          Item(syncId: _generateSyncId(), number: 2, name: 'Raport lunar',     description: 'Raport de activitate lunară',        createdAt: DateTime(2026, 2,  1,  8, 30), expiresAt: DateTime(2026, 6, 30, 23, 59)),
-          Item(syncId: _generateSyncId(), number: 3, name: 'Întâlnire echipă', description: 'Ședință săptămânală de status',     createdAt: DateTime(2026, 3, 15, 10,  0), expiresAt: DateTime(2026, 12,31, 17,  0)),
-          Item(syncId: _generateSyncId(), number: 4, name: 'Audit intern',     description: 'Verificare proceduri interne',       createdAt: DateTime(2026, 4,  5, 11,  0), expiresAt: DateTime(2026, 8, 15, 16,  0)),
-          Item(syncId: _generateSyncId(), number: 5, name: 'Buget anual',      description: 'Planificare buget pentru 2027',      createdAt: DateTime(2026, 5, 20, 14,  0), expiresAt: DateTime(2026,11, 30, 23, 59)),
-        ]);
-        _nextNumber = 6;
-        _loading    = false;
-      });
-      await _saveItems();
+      if (demo.isNotEmpty) await _removeDemoItems(demo);
     } else {
       // Tabel nou, fără date salvate — pornește complet gol.
       setState(() {
@@ -1514,6 +1524,39 @@ class _ManagementPageState extends State<ManagementPage>
     }
     await _refreshNoShows();
     unawaited(_applyAutoNoShows());
+  }
+
+  // Datele demonstrative ale versiunilor vechi ocupau zile reale în calculul
+  // botului (ex. 30–31 decembrie). Le scoatem, cu alarmele lor, și
+  // renumerotăm restul (alarmele urmează numărul).
+  Future<void> _removeDemoItems(List<Item> demo) async {
+    final boardIndex = _activeBoardIndex;
+    for (final d in demo) {
+      await NotificationService.cancelFor(d.number, boardIndex: boardIndex);
+      await SmsService.cancelFor(d.number, boardIndex: boardIndex);
+      await ValidationService.cancelFor(d.syncId);
+    }
+    final renumbered = <Item>[];
+    setState(() {
+      for (var i = 0; i < _items.length; i++) {
+        if (_items[i].number != i + 1) {
+          renumbered.add(_items[i]);
+          _items[i] = _items[i].copyWith(number: i + 1);
+        }
+      }
+      _nextNumber = _items.length + 1;
+    });
+    for (final old in renumbered) {
+      await NotificationService.cancelFor(old.number, boardIndex: boardIndex);
+      await SmsService.cancelFor(old.number, boardIndex: boardIndex);
+    }
+    for (final old in renumbered) {
+      final item = _items.firstWhere((e) => e.syncId == old.syncId);
+      await NotificationService.scheduleFor(item, boardIndex: boardIndex);
+      await SmsService.scheduleFor(item,
+          template: _smsTemplate, boardIndex: boardIndex);
+    }
+    await _saveItems();
   }
 
   Future<void> _saveItems() async {
@@ -3037,8 +3080,12 @@ class _ManagementPageState extends State<ManagementPage>
       // acum, nu are sens ca ValidationDeadlineReceiver să mai încerce peste
       // câteva ore să o șteargă din nou și să trimită un al doilea SMS.
       await ValidationService.cancelFor(syncId);
+      // Doar pentru sejururi care nu s-au încheiat — ștergerea istoricului
+      // nu trebuie să anunțe foștii clienți că le-a fost „anulată” rezervarea.
       if (item.phoneNumber != null &&
-          item.phoneNumber!.isNotEmpty) {
+          item.phoneNumber!.isNotEmpty &&
+          item.expiresAt != null &&
+          item.expiresAt!.isAfter(DateTime.now())) {
         await SmsService.sendNow(item.phoneNumber!,
             'Rezervarea ta la ${_activeBoard.name} a fost anulată de proprietar.');
       }
@@ -3057,6 +3104,28 @@ class _ManagementPageState extends State<ManagementPage>
     final idx = _items.indexWhere((e) => e.number == item.number);
     if (idx == -1) return;
     final newValidated = !item.validated;
+    // Debifarea se face ușor din greșeală — o confirmăm.
+    if (!newValidated) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Anulezi validarea?'),
+          content: Text('Plata pentru "${item.name}" nu va mai fi marcată ca '
+              'confirmată.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Renunță'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Anulează validarea'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
     final updated = item.copyWith(validated: newValidated);
     setState(() => _items[idx] = updated);
     await _saveItems();
@@ -3064,7 +3133,7 @@ class _ManagementPageState extends State<ManagementPage>
     // Validat → nu mai are rost termenul de 24h (ValidationService.scheduleFor
     // anulează el însuși alarma când vede validated=true, dar apelăm explicit
     // și aici pentru claritate). Anulat validarea → rearmăm termenul original
-    // (createdAt + 24h), care poate fi deja trecut dacă a durat mult.
+    // (createdAt + 24h) doar dacă n-a trecut încă (vezi scheduleFor).
     await ValidationService.scheduleFor(updated, _activeBoardId);
     if (newValidated &&
         updated.phoneNumber != null &&
