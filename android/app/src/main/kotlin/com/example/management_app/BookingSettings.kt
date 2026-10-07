@@ -236,7 +236,7 @@ object BookingSettings {
     // Flutter, ca (prefix, payload). Fiecare intrare e citită separat — una
     // coruptă e sărită, fără să le ascundă pe cele de după ea (altfel o oră
     // deja rezervată ar fi oferită din nou).
-    private fun queuedEntries(context: Context, boardId: String): List<Pair<String, String>> {
+    internal fun queuedEntries(context: Context, boardId: String): List<Pair<String, String>> {
         val queueJson = context
             .getSharedPreferences(SmsSyncReceiver.PREFS_NAME, Context.MODE_PRIVATE)
             .getString(SmsSyncReceiver.QUEUE_KEY, "[]") ?: "[]"

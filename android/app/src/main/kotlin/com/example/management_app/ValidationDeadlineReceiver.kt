@@ -52,7 +52,11 @@ class ValidationDeadlineReceiver : BroadcastReceiver() {
         if (!stayIsInFuture(item, LocalDateTime.now())) return
 
         val boardName = BookingSettings.loadBoards(context).firstOrNull { it.id == boardId }?.name ?: ""
-        SmsSyncReceiver.enqueue(context, boardId, "PEN:D:$syncId")
+        SmsSyncReceiver.enqueueLocal(context, boardId, "PEN:D:$syncId")
+        OwnerNotice.show(
+            context, "Rezervare anulată automat",
+            "${item.name} ($boardName) — plata nu a fost confirmată în 24 de ore.",
+        )
 
         val phone = item.phones.firstOrNull() ?: return
         sendSmsNow(

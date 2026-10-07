@@ -52,16 +52,39 @@ class SmsSyncReceiver : BroadcastReceiver() {
         // rezervări, anularea automată la 24h — trebuie trimisă și
         // partenerului) sau ORIGIN_PARTNER (a venit chiar de la partener — nu
         // se retrimite, altfel mesajele s-ar plimba la nesfârșit).
-        fun enqueue(context: Context, boardId: String, msg: String, origin: String = ORIGIN_LOCAL) {
+        //
+        // „forwarded” = schimbarea locală a fost deja trimisă partenerului
+        // (vezi enqueueLocal) — Flutter nu o mai retrimite.
+        fun enqueue(
+            context: Context, boardId: String, msg: String,
+            origin: String = ORIGIN_LOCAL, forwarded: Boolean = false,
+        ) {
             synchronized(QUEUE_LOCK) {
                 val prefs = queuePrefs(context)
                 val arr = readQueue(prefs)
-                arr.put(
-                    JSONObject().put("id", newEntryId()).put("board", boardId)
-                        .put("msg", msg).put("origin", origin)
-                )
+                val entry = JSONObject().put("id", newEntryId()).put("board", boardId)
+                    .put("msg", msg).put("origin", origin)
+                if (forwarded) entry.put("forwarded", true)
+                arr.put(entry)
                 prefs.edit().putString(QUEUE_KEY, arr.toString()).commit()
             }
+        }
+
+        /**
+         * O schimbare făcută nativ (botul de rezervări, anularea automată la
+         * 24h): trimisă imediat partenerului tabelului, nu abia când se
+         * deschide aplicația — altfel botul de pe celălalt telefon ar putea
+         * oferi aceleași date între timp. Fără partener (sau dacă trimiterea
+         * eșuează) rămâne ca Flutter s-o retrimită la deschidere.
+         */
+        fun enqueueLocal(context: Context, boardId: String, msg: String) {
+            val forwarded = try {
+                sendSigned(context, boardId, msg)
+            } catch (e: Exception) {
+                Diag.e("forward to partner failed", e)
+                false
+            }
+            enqueue(context, boardId, msg, ORIGIN_LOCAL, forwarded)
         }
 
         /**

@@ -804,6 +804,10 @@ class ClientBookingReceiver : BroadcastReceiver() {
         AlarmScheduler.cancelValidationAlarm(context, AlarmScheduler.validationAlarmId(candidate.syncId))
         BotReminders.cancel(context, candidate.syncId)
         sendSms(context, sender, "Programarea ta ${candidate.label} a fost anulată.")
+        OwnerNotice.show(
+            context, "Rezervare anulată de client",
+            "${candidate.label} — anulată prin SMS de clientul cu numărul ${Diag.mask(sender)}.",
+        )
     }
 
     private fun generateSyncId(): String {
@@ -851,7 +855,7 @@ class ClientBookingReceiver : BroadcastReceiver() {
     // Scrie un mesaj în coada de sincronizare existentă (folosită atât pentru
     // rezervări noi „PEN:A:”, cât și pentru anulări „PEN:D:”).
     private fun enqueueSyncMessage(context: Context, boardId: String, msg: String) =
-        SmsSyncReceiver.enqueue(context, boardId, msg)
+        SmsSyncReceiver.enqueueLocal(context, boardId, msg)
 
     private fun sendSms(context: Context, phone: String, message: String) {
         SmsSender.send(context, phone, message)

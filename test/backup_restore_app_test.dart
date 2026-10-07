@@ -13,6 +13,7 @@ import 'package:pensiune_app/main.dart';
 // al SharedPreferences. Testul verifică pe aplicația întreagă că, după
 // restaurare, tabelul afișează datele restaurate — nu cele vechi din cache.
 const _backupChannel = MethodChannel('pensiune/backup');
+const _smsChannel = MethodChannel('pensiune/sms');
 
 String _items(List<String> names) => jsonEncode([
       for (var i = 0; i < names.length; i++)
@@ -110,5 +111,52 @@ void main() {
     final saved = prefs.getString('management_items_b1')!;
     expect(saved, contains('Ion Restaurat'));
     expect(saved, isNot(contains('Ana Popescu')));
+  });
+
+  testWidgets('revenirea din selectorul de fișier nu pornește coada în timpul restaurării',
+      (tester) async {
+    debugSimulateAndroid = true;
+    addTearDown(() => debugSimulateAndroid = null);
+    var restoring = false;
+    var queueReadDuringRestore = false;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_smsChannel, (call) async {
+      if (call.method == 'getSyncMessages') {
+        if (restoring) queueReadDuringRestore = true;
+        return '[]';
+      }
+      return null;
+    });
+    addTearDown(() => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_smsChannel, null));
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_backupChannel, (call) async {
+      switch (call.method) {
+        case 'getStatus':
+          return {'folderUri': null};
+        case 'pickAndRestoreBackup':
+          restoring = true;
+          // Selectorul de fișier: aplicația iese și revine în prim-plan.
+          tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+          tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+          for (var i = 0; i < 20; i++) {
+            await Future<void>.microtask(() {});
+          }
+          restoring = false;
+          return null;
+      }
+      return null;
+    });
+
+    await tester.pumpWidget(const ManagementApp());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Backup & restaurare'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Restaurează din alt fișier'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Restaurează'));
+    await tester.pumpAndSettle();
+
+    expect(queueReadDuringRestore, isFalse);
   });
 }

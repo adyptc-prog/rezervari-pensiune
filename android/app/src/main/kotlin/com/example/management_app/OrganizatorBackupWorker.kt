@@ -25,7 +25,10 @@ class OrganizatorBackupWorker(
         try {
             BackupManager.createBackup(appContext, auto = true)
         } catch (e: Exception) {
-            BackupManager.recordAutoError(appContext, e.message ?: e.toString())
+            val message = e.message ?: e.toString()
+            BackupManager.recordAutoError(appContext, message)
+            // Altfel eșecul se vedea doar deschizând ecranul Backup.
+            OwnerNotice.show(appContext, "Backup-ul automat a eșuat", message)
         }
         return Result.success()
     }

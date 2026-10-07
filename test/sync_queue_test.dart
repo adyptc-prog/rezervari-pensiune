@@ -12,7 +12,7 @@ const _smsChannel = MethodChannel('pensiune/sms');
 // Simulează coada nativă (SmsSyncReceiver): intrări cu id, confirmate
 // individual prin ackSyncMessages.
 class _FakeNativeQueue {
-  final entries = <Map<String, String>>[];
+  final entries = <Map<String, Object>>[];
   final acked = <List<String>>[];
   var reads = 0;
   var nextId = 0;
@@ -23,11 +23,13 @@ class _FakeNativeQueue {
 
   final sent = <Map<String, String>>[];
 
-  void add(String board, String msg, {String? origin}) => entries.add({
+  void add(String board, String msg, {String? origin, bool forwarded = false}) =>
+      entries.add({
         'id': 'e${nextId++}',
         'board': board,
         'msg': msg,
         'origin': ?origin,
+        if (forwarded) 'forwarded': true,
       });
 
   Future<Object?> handle(MethodCall call) async {
@@ -166,5 +168,20 @@ void main() {
 
     expect(find.text('De la partener'), findsOneWidget);
     expect(queue.sent, isEmpty);
+  });
+
+  testWidgets('schimbarea trimisă deja nativ partenerului nu e retrimisă',
+      (tester) async {
+    queue.add('b2', _add('aaaa', 'Trimisă nativ'), origin: 'local', forwarded: true);
+    queue.add('b2', _add('bbbb', 'Netrimisă'), origin: 'local');
+
+    await tester.pumpWidget(const ManagementApp());
+    await settle(tester);
+
+    expect(queue.sent, [
+      {'board': 'b2', 'message': _add('bbbb', 'Netrimisă')},
+    ]);
+    // Ambele sunt totuși aplicate și confirmate.
+    expect(queue.entries, isEmpty);
   });
 }

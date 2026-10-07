@@ -3,6 +3,9 @@ package com.example.management_app
 import android.content.Context
 import android.content.SharedPreferences
 import org.json.JSONArray
+import org.json.JSONObject
+import java.time.LocalDateTime
+import java.time.ZoneId
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -69,6 +72,9 @@ object AlarmRescheduler {
                 if (boardId.isNotEmpty()) {
                     rescheduleValidationAlarms(context, prefs, JSONArray(itemsJson), now)
                 }
+            }
+            for (boardId in boardIds) {
+                if (boardId.isNotEmpty()) rescheduleQueuedValidationAlarms(context, prefs, boardId, now)
             }
         } catch (_: Exception) {
             // Date corupte / neașteptate — nu blocăm boot-ul aplicației
@@ -149,6 +155,30 @@ object AlarmRescheduler {
             // Dacă termenul a trecut deja cât timp telefonul a fost oprit,
             // declanșăm aproape imediat, ca rezervarea neplătită să fie tot
             // anulată, doar cu întârziere — nu ignorată definitiv.
+            AlarmScheduler.scheduleValidationAlarm(context, alarmId, maxOf(deadlineMs, now + 5_000))
+        }
+    }
+
+    // Rezervările botului încă neprocesate de aplicație (stau în coada de
+    // sincronizare, nu în management_items) — termenul lor de 24h s-ar pierde
+    // altfel la repornire, iar rezervarea neplătită n-ar mai fi anulată.
+    private fun rescheduleQueuedValidationAlarms(
+        context: Context, prefs: SharedPreferences, boardId: String, now: Long,
+    ) {
+        for ((prefix, payload) in BookingSettings.queuedEntries(context, boardId)) {
+            if (prefix != "PEN:A:") continue
+            val j = try { JSONObject(payload) } catch (_: Exception) { continue }
+            val syncId = j.optString("s", "")
+            if (syncId.isEmpty()) continue
+            val alarmId = AlarmScheduler.validationAlarmId(syncId)
+            if (!prefs.contains("flutter.validation_alarm_$alarmId")) continue
+            val createdAtMs = try {
+                LocalDateTime.parse(j.optString("c", "")).atZone(ZoneId.systemDefault())
+                    .toInstant().toEpochMilli()
+            } catch (_: Exception) {
+                continue
+            }
+            val deadlineMs = createdAtMs + 24L * 60 * 60 * 1000
             AlarmScheduler.scheduleValidationAlarm(context, alarmId, maxOf(deadlineMs, now + 5_000))
         }
     }

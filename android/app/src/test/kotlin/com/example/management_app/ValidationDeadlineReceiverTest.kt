@@ -93,6 +93,21 @@ class ValidationDeadlineReceiverTest {
     }
 
     @Test
+    fun `anularea automata il anunta pe proprietar`() {
+        val alarmId = seedUnpaidBooking(syncIdWithHashSign(negative = false))
+        fireAndWait(alarmId)
+
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val deadline = System.currentTimeMillis() + 5_000
+        while (shadowOf(nm).allNotifications.isEmpty() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20)
+        }
+        val title = shadowOf(nm).allNotifications.single()
+            .extras.getString(android.app.Notification.EXTRA_TITLE)
+        assertEquals("Rezervare anulată automat", title)
+    }
+
+    @Test
     fun `rezervarea neplatita e anulata cu ID pozitiv`() {
         val syncId = syncIdWithHashSign(negative = false)
         val alarmId = seedUnpaidBooking(syncId)

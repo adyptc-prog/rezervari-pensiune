@@ -1,7 +1,6 @@
 package com.example.management_app
 
 import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -31,14 +30,7 @@ class NotifAlarmReceiver : BroadcastReceiver() {
 
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val channel = NotificationChannel(
-                    CHANNEL_ID,
-                    "Alerte Rezervări Pensiune",
-                    NotificationManager.IMPORTANCE_HIGH
-                ).apply { enableVibration(true) }
-                nm.createNotificationChannel(channel)
-            }
+            OwnerNotice.ensureChannel(context)
 
             val iconRes = context.resources.getIdentifier(
                 "ic_launcher", "mipmap", context.packageName
