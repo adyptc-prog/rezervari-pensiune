@@ -85,6 +85,21 @@ const _kDefaultSmsTemplate =
 
 enum _AlertMode { lead, exact, none }
 
+// ── Prezența la programare ────────────────────────────────────────────────────
+const kCame   = 'came';
+const kNoShow = 'noShow';
+// Momentul de la care aplicația cere confirmarea prezenței — programările
+// încheiate înainte de această funcție nu devin „de confirmat”.
+const _kAttendanceSinceKey = 'attendance_since';
+
+/// Sejur încheiat (după check-out), încă neconfirmat de pensiune.
+bool needsAttendance(Item item, DateTime? since, {DateTime? now}) =>
+    item.attendance == null &&
+    item.expiresAt != null &&
+    item.expiresAt!.isBefore(now ?? DateTime.now()) &&
+    since != null &&
+    item.expiresAt!.isAfter(since);
+
 // ─── Helper: ID unic stabil pentru sincronizare ───────────────────────────────
 String _generateSyncId() {
   final r = Random.secure();
@@ -163,8 +178,8 @@ class NotificationService {
       await _schedule(
         id: base + item.number * 10 + 2,
         when: item.expiresAt!,
-        title: '🔴 Expirat: ${item.name}',
-        body: 'Înregistrarea a expirat la ${_fmt(item.expiresAt!)}',
+        title: 'Sejur încheiat: ${item.name}',
+        body: 'A venit? Confirmă prezența în aplicație.',
       );
     }
   }
@@ -472,7 +487,8 @@ class ValidationService {
 //
 // Câmpuri JSON compact: s=syncId, n=name, d=description, c=createdAt,
 //   e=expiresAt, w=warningAt, p1/p2/p3=phoneNumbers, st=startsAt,
-//   v=validated, b=rezervare prin bot (viaBot)
+//   v=validated, b=rezervare prin bot (viaBot),
+//   a=prezență ('c' a venit / 'n' nu a venit)
 class SyncService {
   static const _ch = MethodChannel('pensiune/sms');
   static String? _partnerPhone;
@@ -695,6 +711,9 @@ class Item {
   // (pentru anulare/confirmări), nu un destinatar de alerte: la expirare nu
   // primește SMS-ul „EXPIRAT”.
   final bool viaBot;
+  // Prezența la programare, confirmată de salon după ora de final:
+  // null = neconfirmată, 'came' = a venit, 'noShow' = nu a venit.
+  final String? attendance;
 
   const Item({
     required this.syncId,
@@ -710,6 +729,7 @@ class Item {
     this.startsAt,
     this.validated = false,
     this.viaBot = false,
+    this.attendance,
   });
 
   List<String> get phones => [
@@ -737,6 +757,8 @@ class Item {
     DateTime? startsAt,
     bool clearStartsAt = false,
     bool? validated,
+    String? attendance,
+    bool clearAttendance = false,
   }) {
     return Item(
       syncId:       syncId       ?? this.syncId,
@@ -752,6 +774,7 @@ class Item {
       startsAt:     clearStartsAt ? null : (startsAt ?? this.startsAt),
       validated:    validated ?? this.validated,
       viaBot:       viaBot,
+      attendance:   clearAttendance ? null : (attendance ?? this.attendance),
     );
   }
 
@@ -770,6 +793,7 @@ class Item {
         'startsAt':     startsAt?.toIso8601String(),
         'validated':    validated,
         'viaBot':       viaBot,
+        'attendance':   attendance,
       };
 
   factory Item.fromJson(Map<String, dynamic> json) => Item(
@@ -791,6 +815,7 @@ class Item {
             ? DateTime.parse(json['startsAt'] as String) : null,
         validated:    json['validated'] as bool? ?? false,
         viaBot:       json['viaBot'] as bool? ?? false,
+        attendance:   json['attendance'] as String?,
       );
 
   // Format compact pentru SMS (câmpuri opționale omise dacă sunt goale/null)
@@ -807,6 +832,8 @@ class Item {
         if (startsAt != null) 'st': _isoShort(startsAt!),
         if (validated) 'v': true,
         if (viaBot) 'b': true,
+        if (attendance == kCame) 'a': 'c',
+        if (attendance == kNoShow) 'a': 'n',
       };
 
   factory Item.fromSyncJson(Map<String, dynamic> j) => Item(
@@ -823,6 +850,7 @@ class Item {
         startsAt:     j['st'] != null ? DateTime.parse(j['st'] as String) : null,
         validated:    j['v'] == true,
         viaBot:       j['b'] == true,
+        attendance:   switch (j['a']) { 'c' => kCame, 'n' => kNoShow, _ => null },
       );
 }
 
@@ -1082,6 +1110,7 @@ class _ManagementPageState extends State<ManagementPage>
   Timer? _syncQueueTimer;
   String _smsTemplate = _kDefaultSmsTemplate;
   int _alertLeadMin = kDefaultAlertLeadMin;
+  DateTime? _attendanceSince;
 
   // Înainte ca _loadData să termine încărcarea inițială, _boards e încă gol
   // (Scaffold-ul cu spinner se construiește imediat) — nu explodăm în acel caz.
@@ -1413,6 +1442,14 @@ class _ManagementPageState extends State<ManagementPage>
       _smsTemplate  = prefs.getString(_kSmsTemplateKey) ?? _kDefaultSmsTemplate;
       _bookingSettings = await _loadBookingSettings(prefs, _activeBoardId);
       _alertLeadMin = _loadAlertLead(prefs, _activeBoardId);
+      final since = prefs.getString(_kAttendanceSinceKey);
+      if (since == null) {
+        _attendanceSince = DateTime.now();
+        await prefs.setString(
+            _kAttendanceSinceKey, _attendanceSince!.toIso8601String());
+      } else {
+        _attendanceSince = DateTime.tryParse(since);
+      }
       final deletedStr = prefs.getString(_deletedBufferKeyFor(_activeBoardId));
       if (deletedStr != null) {
         final deletedList = (jsonDecode(deletedStr) as List<dynamic>)
@@ -1875,7 +1912,18 @@ class _ManagementPageState extends State<ManagementPage>
       item.warningAt != null &&
       item.warningAt!.isBefore(DateTime.now());
 
+  bool _needsAttendance(Item item) => needsAttendance(item, _attendanceSince);
+
+  // Programare încheiată după pornirea funcției — are buton de prezență în
+  // locul celui de alertă (alerta nu mai are rost după final).
+  bool _tracksAttendance(Item item) =>
+      _isExpired(item) &&
+      _attendanceSince != null &&
+      (item.attendance != null || item.expiresAt!.isAfter(_attendanceSince!));
+
   Color _rowBg(Item item, bool isEven) {
+    if (item.attendance == kCame) return const Color(0xFFE7F6EC);
+    if (_needsAttendance(item)) return const Color(0xFFFFEDD5);
     if (_isExpired(item)) return const Color(0xFFFFDADA);
     if (_isWarning(item)) return const Color(0xFFFEF3C7);
     return isEven ? Colors.white : const Color(0xFFF8FAFC);
@@ -2330,6 +2378,9 @@ class _ManagementPageState extends State<ManagementPage>
                         clearWarning: _shiftedWarning(
                                 existing, selectedStart ?? selectedExpiry) ==
                             null,
+                        // Mutată la alte date: prezența se confirmă din nou.
+                        clearAttendance: selectedExpiry != existing.expiresAt ||
+                            selectedStart != existing.startsAt,
                       );
                     }
                   } else {
@@ -3123,6 +3174,121 @@ class _ManagementPageState extends State<ManagementPage>
     );
   }
 
+  // ── Prezența la programare ───────────────────────────────────────────────────
+  Future<void> _setAttendance(Item item, String? value) async {
+    final idx = _items.indexWhere((e) => e.syncId == item.syncId);
+    if (idx == -1) return;
+    final updated = value == null
+        ? _items[idx].copyWith(clearAttendance: true)
+        : _items[idx].copyWith(attendance: value);
+    setState(() => _items[idx] = updated);
+    await _saveItems();
+    await SyncService.sendUpdate(updated);
+  }
+
+  Future<void> _showAttendanceDialog(Item item) async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('A venit ${item.name}?'),
+        content: Text(
+          item.expiresAt != null
+              ? 'Sejurul s-a încheiat la ${_formatDateTime(item.expiresAt!)}.'
+              : 'Confirmă prezența oaspetelui.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Anulează'),
+          ),
+          OutlinedButton.icon(
+            icon: Icon(Icons.close, color: Colors.red.shade700),
+            label: Text('Nu a venit',
+                style: TextStyle(color: Colors.red.shade700)),
+            onPressed: () => Navigator.pop(ctx, kNoShow),
+          ),
+          FilledButton.icon(
+            icon: const Icon(Icons.check),
+            label: const Text('A venit'),
+            style: FilledButton.styleFrom(
+                backgroundColor: Colors.green.shade700),
+            onPressed: () => Navigator.pop(ctx, kCame),
+          ),
+        ],
+      ),
+    );
+    if (choice != null && choice != item.attendance) {
+      await _setAttendance(item, choice);
+    }
+  }
+
+  // Lista programărilor încheiate și neconfirmate, cu ✓ / ✗ pe fiecare rând.
+  Future<void> _showPendingAttendance() async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDs) {
+          final pending = _items.where(_needsAttendance).toList()
+            ..sort((a, b) => a.expiresAt!.compareTo(b.expiresAt!));
+          return AlertDialog(
+            title: const Text('Confirmă prezența'),
+            content: SizedBox(
+              width: 420,
+              child: pending.isEmpty
+                  ? const Text('Toate rezervările sunt confirmate.')
+                  : ListView(
+                      shrinkWrap: true,
+                      children: [
+                        for (final item in pending)
+                          ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(item.name),
+                            subtitle: Text(_formatDateTime(item.expiresAt!)),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  tooltip: 'Nu a venit',
+                                  icon: Icon(Icons.close,
+                                      color: Colors.red.shade700),
+                                  onPressed: () async {
+                                    await _setAttendance(item, kNoShow);
+                                    setDs(() {});
+                                  },
+                                ),
+                                IconButton(
+                                  tooltip: 'A venit',
+                                  icon: Icon(Icons.check,
+                                      color: Colors.green.shade700),
+                                  onPressed: () async {
+                                    await _setAttendance(item, kCame);
+                                    setDs(() {});
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Închide'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  String _attendanceLabel(Item item) => switch (item.attendance) {
+        kCame   => 'A venit',
+        kNoShow => 'Nu a venit',
+        _       => _needsAttendance(item) ? 'De confirmat' : '—',
+      };
+
   // ── Dialog detalii ───────────────────────────────────────────────────────────
   void _showItemDetail(Item item) {
     showDialog(
@@ -3159,10 +3325,27 @@ class _ManagementPageState extends State<ManagementPage>
                 _detailRow('SMS la', item.phones.join('\n'),
                     valueColor: Colors.blue.shade700),
               ],
+              if (_isExpired(item)) ...[
+                const SizedBox(height: 10),
+                _detailRow('Prezență', _attendanceLabel(item),
+                    valueColor: switch (item.attendance) {
+                      kCame   => Colors.green.shade700,
+                      kNoShow => Colors.red.shade700,
+                      _       => Colors.orange.shade800,
+                    }),
+              ],
             ],
           ),
         ),
         actions: [
+          if (_isExpired(item))
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _showAttendanceDialog(item);
+              },
+              child: const Text('Prezență'),
+            ),
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
@@ -3470,6 +3653,34 @@ class _ManagementPageState extends State<ManagementPage>
                         ),
                       ),
                     ),
+                  if (_items.any(_needsAttendance))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Material(
+                        color: const Color(0xFFFFEDD5),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          side: BorderSide(color: Colors.orange.shade300),
+                        ),
+                        child: ListTile(
+                          leading: Icon(Icons.how_to_reg_outlined,
+                              color: Colors.orange.shade900),
+                          title: Text(
+                              '${_items.where(_needsAttendance).length} '
+                              'rezervări de confirmat',
+                              style: TextStyle(
+                                  color: Colors.orange.shade900,
+                                  fontWeight: FontWeight.w600)),
+                          subtitle: const Text(
+                              'Marchează dacă oaspeții au venit.'),
+                          trailing: TextButton(
+                            onPressed: _showPendingAttendance,
+                            child: const Text('Confirmă'),
+                          ),
+                          onTap: _showPendingAttendance,
+                        ),
+                      ),
+                    ),
                   if (_smsFailure != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 12),
@@ -3596,7 +3807,8 @@ class _ManagementPageState extends State<ManagementPage>
                                                   return _freeSlotRow(entry, isEven);
                                                 }
                                                 final item   = entry as Item;
-                                                final expired = _isExpired(item);
+                                                // Rezervarea la care oaspetele a venit nu mai e „roșie”.
+                                                final expired = _isExpired(item) && item.attendance != kCame;
                                                 return InkWell(
                                                   onTap: () =>
                                                       _showItemDetail(item),
@@ -3628,6 +3840,23 @@ class _ManagementPageState extends State<ManagementPage>
                                                                 onPressed: () =>
                                                                     _showItemDialog(existing: item),
                                                               ),
+                                                              if (_tracksAttendance(item))
+                                                                _actionBtn(
+                                                                  icon: switch (item.attendance) {
+                                                                    kCame   => Icons.check_circle,
+                                                                    kNoShow => Icons.cancel,
+                                                                    _       => Icons.how_to_reg_outlined,
+                                                                  },
+                                                                  tooltip: 'Confirmă prezența',
+                                                                  color: switch (item.attendance) {
+                                                                    kCame   => Colors.green.shade700,
+                                                                    kNoShow => Colors.red.shade700,
+                                                                    _       => Colors.orange.shade800,
+                                                                  },
+                                                                  onPressed: () =>
+                                                                      _showAttendanceDialog(item),
+                                                                )
+                                                              else
                                                               _actionBtn(
                                                                 icon: Icons.alarm_outlined,
                                                                 tooltip: 'Setează alertă & SMS',
