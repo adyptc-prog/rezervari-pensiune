@@ -95,17 +95,23 @@ class SmsSyncReceiver : BroadcastReceiver() {
         fun acknowledge(context: Context, ids: Collection<String>) {
             if (ids.isEmpty()) return
             val done = ids.toSet()
+            val processed = mutableListOf<String>()
             synchronized(QUEUE_LOCK) {
                 val prefs = queuePrefs(context)
                 val arr = readQueue(prefs)
                 val remaining = JSONArray()
                 for (i in 0 until arr.length()) {
                     val entry = arr.optJSONObject(i)
-                    if (entry != null && entry.optString("id") in done) continue
+                    if (entry != null && entry.optString("id") in done) {
+                        processed.add(entry.optString("msg"))
+                        continue
+                    }
                     remaining.put(arr.opt(i))
                 }
                 prefs.edit().putString(QUEUE_KEY, remaining.toString()).commit()
             }
+            // Rezervările prin bot preluate au acum alarma definitivă din Dart.
+            BotReminders.onProcessed(context, processed)
         }
 
         fun secretKey(boardId: String) = "flutter.sync_secret_$boardId"

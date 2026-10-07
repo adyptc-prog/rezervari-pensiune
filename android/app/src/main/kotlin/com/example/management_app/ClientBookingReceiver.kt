@@ -662,6 +662,7 @@ class ClientBookingReceiver : BroadcastReceiver() {
         // însuși, nu are sens să mai primească și un SMS de „anulat pentru
         // neplată” peste câteva ore.
         AlarmScheduler.cancelValidationAlarm(context, AlarmScheduler.validationAlarmId(candidate.syncId))
+        BotReminders.cancel(context, candidate.syncId)
         sendSms(context, sender, "Programarea ta ${candidate.label} a fost anulată.")
     }
 
@@ -694,13 +695,16 @@ class ClientBookingReceiver : BroadcastReceiver() {
         // fără ea, rezervarea n-ar avea reminder deloc.
         // Ca în aplicație, intervalul se socotește față de sosire (st).
         val warning = start.minusMinutes(BookingSettings.loadAlertLeadMin(context, boardId).toLong())
-        if (warning.isAfter(LocalDateTime.now())) item.put("w", warning.format(ISO_SHORT))
+        val hasWarning = warning.isAfter(LocalDateTime.now())
+        if (hasWarning) item.put("w", warning.format(ISO_SHORT))
         // Rezervare făcută de client prin bot: telefonul e al clientului, nu
         // un destinatar de alerte — fără SMS „EXPIRAT” la final.
         item.put("b", true)
         item.put("st", start.format(ISO_SHORT))
 
         enqueueSyncMessage(context, boardId, "PEN:A:$item")
+        // Reminderul pleacă și dacă aplicația nu e deschisă până atunci.
+        if (hasWarning) BotReminders.schedule(context, syncId, sender, sender, warning, end)
         return syncId
     }
 
