@@ -99,7 +99,7 @@ void main() {
     expect(find.text('4 înregistrări'), findsOneWidget);
   });
 
-  testWidgets('cele 3 tabele pot fi comutate și sunt independente',
+  testWidgets('tabelele pot fi comutate și sunt independente',
       (tester) async {
     await tester.pumpWidget(const ManagementApp());
     await tester.pumpAndSettle();
@@ -122,6 +122,24 @@ void main() {
 
     expect(find.text('Tabel 2'), findsOneWidget);
     expect(find.text('Proiect Alpha'), findsNothing);
+    expect(find.text('0 înregistrări'), findsOneWidget);
+  });
+
+  testWidgets('al 10-lea tabel e în selector și poate fi folosit',
+      (tester) async {
+    await tester.pumpWidget(const ManagementApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Tabel 1'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('Tabel 10'), 100,
+        scrollable: find.descendant(
+            of: find.byType(SimpleDialog),
+            matching: find.byType(Scrollable)));
+    await tester.tap(find.text('Tabel 10'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tabel 10'), findsOneWidget);
     expect(find.text('0 înregistrări'), findsOneWidget);
   });
 

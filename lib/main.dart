@@ -140,7 +140,7 @@ class NotificationService {
     }
   }
 
-  // ID-urile alarmelor includ indexul tabelului (0, 1, 2) ca să nu se
+  // ID-urile alarmelor includ indexul tabelului (0..9) ca să nu se
   // suprapună între tabele diferite — pentru tabelul 0 (primul, migrat din
   // versiunea cu un singur tabel) formula rămâne identică cu cea veche.
   static Future<void> scheduleFor(Item item, {required int boardIndex}) async {
@@ -285,7 +285,7 @@ class SmsService {
     } catch (_) {}
   }
 
-  // ID-urile includ indexul tabelului (0, 1, 2) ca să nu se suprapună între
+  // ID-urile includ indexul tabelului (0..9) ca să nu se suprapună între
   // tabele diferite — pentru tabelul 0 formula rămâne identică cu cea veche.
   static List<int> _warnIds(int n, int boardIndex) {
     final base = boardIndex * 10000000;
@@ -946,20 +946,41 @@ Future<void> _saveBookingSettings(String boardId, BookingSettingsData s) async {
   await prefs.setString(_ibanKeyFor(boardId), s.iban);
 }
 
+// Numărul de tabele (categorii de servicii). ID-urile alarmelor includ indexul
+// tabelului (index × 10.000.000 pentru SMS) — cu 10 tabele rămân sub
+// 100.000.000, departe de plaja reminderelor botului (BotReminders.kt).
+const kBoardCount = 10;
+
+/// Completează lista de tabele până la [kBoardCount] (b1..b10), fără să
+/// atingă tabelele existente (nume, ordine, date). Null dacă nu lipsește nimic.
+List<Board>? completeBoards(List<Board> boards) {
+  final ids = boards.map((b) => b.id).toSet();
+  final added = [
+    for (var i = 1; i <= kBoardCount; i++)
+      if (!ids.contains('b$i')) Board(id: 'b$i', name: 'Tabel $i'),
+  ];
+  if (added.isEmpty || boards.length >= kBoardCount) return null;
+  return [...boards, ...added.take(kBoardCount - boards.length)];
+}
+
 // Încarcă lista de tabele; la prima rulare după actualizare, migrează datele
-// vechi (un singur tabel implicit) în „Tabel 1” și creează încă două goale.
+// vechi (un singur tabel implicit) în „Tabel 1”. Instalările cu mai puține
+// tabele (versiunile cu 3) primesc restul, goale, până la [kBoardCount].
 Future<List<Board>> _loadOrMigrateBoards(SharedPreferences prefs) async {
   final boardsJson = prefs.getString(_kBoardsKey);
   if (boardsJson != null) {
-    return (jsonDecode(boardsJson) as List<dynamic>)
+    final boards = (jsonDecode(boardsJson) as List<dynamic>)
         .map((e) => Board.fromJson(e as Map<String, dynamic>))
         .toList();
+    final completed = completeBoards(boards);
+    if (completed == null) return boards;
+    await prefs.setString(
+        _kBoardsKey, jsonEncode(completed.map((b) => b.toJson()).toList()));
+    return completed;
   }
 
   const b1 = Board(id: 'b1', name: 'Tabel 1');
-  const b2 = Board(id: 'b2', name: 'Tabel 2');
-  const b3 = Board(id: 'b3', name: 'Tabel 3');
-  const boards = [b1, b2, b3];
+  final boards = completeBoards(const [b1])!;
 
   final legacyItems = prefs.getString(_kLegacyItemsKey);
   if (legacyItems != null) {

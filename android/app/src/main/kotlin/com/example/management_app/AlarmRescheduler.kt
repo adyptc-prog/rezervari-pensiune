@@ -11,7 +11,7 @@ import java.util.TimeZone
  * AlarmManager își pierde toate alarmele programate la repornirea
  * telefonului (sau la actualizarea aplicației). Această clasă recalculează
  * orele de declanșare din înregistrările persistate de Flutter, pentru
- * fiecare din cele 3 tabele ("flutter.management_boards" +
+ * fiecare din cele 10 tabele ("flutter.management_boards" +
  * "flutter.management_items_<boardId>"), și reprogramează alarmele native —
  * fără să fie nevoie ca aplicația Flutter să fie redeschisă.
  *

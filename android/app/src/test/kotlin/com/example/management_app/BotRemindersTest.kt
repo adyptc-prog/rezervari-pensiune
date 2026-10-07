@@ -122,8 +122,8 @@ class BotRemindersTest {
 
     @Test
     fun `id-urile provizorii nu se suprapun cu cele din Dart`() {
-        // Dart: tabel*10.000.000 + număr*100 + 22, maxim 3 tabele.
-        assertFalse(BotReminders.isBotReminderId(2 * 10_000_000 + 9_999 * 100 + 22))
+        // Dart: tabel*10.000.000 + număr*100 + 22, maxim 10 tabele.
+        assertFalse(BotReminders.isBotReminderId(9 * 10_000_000 + 99_999 * 100 + 22))
         assertTrue(BotReminders.isBotReminderId(BotReminders.ID_BASE))
     }
 
