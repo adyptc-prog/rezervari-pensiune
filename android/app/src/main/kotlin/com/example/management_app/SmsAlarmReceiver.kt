@@ -17,13 +17,15 @@ class SmsAlarmReceiver : BroadcastReceiver() {
         Thread {
             try {
                 // Citim datele din SharedPreferences Flutter
-                val prefs   = context.getSharedPreferences(
-                    "FlutterSharedPreferences", Context.MODE_PRIVATE
-                )
-                val dataStr = prefs.getString("flutter.sms_alarm_$alarmId", null)
-                    ?: return@Thread
-
-                val json    = JSONObject(dataStr)
+                // Reminderele provizorii ale botului au datele separat.
+                val json = if (BotReminders.isBotReminderId(alarmId)) {
+                    BotReminders.payload(context, alarmId) ?: return@Thread
+                } else {
+                    val prefs = context.getSharedPreferences(
+                        "FlutterSharedPreferences", Context.MODE_PRIVATE
+                    )
+                    JSONObject(prefs.getString("flutter.sms_alarm_$alarmId", null) ?: return@Thread)
+                }
                 val phone   = json.optString("phone")
                 val message = json.optString("message")
 

@@ -73,6 +73,10 @@ object AlarmRescheduler {
         } catch (_: Exception) {
             // Date corupte / neașteptate — nu blocăm boot-ul aplicației
         }
+        try {
+            BotReminders.rescheduleAll(context)
+        } catch (_: Exception) {
+        }
     }
 
     private fun rescheduleBoard(
