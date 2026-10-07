@@ -295,7 +295,7 @@ class SmsService {
   // Trimite un SMS imediat (nu programat) — folosit pentru notificarea
   // clientului la evenimente manuale din aplicație (ex. validarea plății).
   static Future<void> sendNow(String phone, String message) async {
-    if (!Platform.isAndroid) return;
+    if (!isAndroid) return;
     try {
       await _ch.invokeMethod<void>('sendSms', {'phone': phone, 'message': message});
     } catch (_) {}
@@ -715,6 +715,8 @@ class Item {
   // Prezența la programare, confirmată de salon după ora de final:
   // null = neconfirmată, 'came' = a venit, 'noShow' = nu a venit.
   final String? attendance;
+  // „Nu a venit” pus automat (neconfirmată în 24h), nu de salon.
+  final bool attendanceAuto;
 
   const Item({
     required this.syncId,
@@ -731,6 +733,7 @@ class Item {
     this.validated = false,
     this.viaBot = false,
     this.attendance,
+    this.attendanceAuto = false,
   });
 
   // Telefonul după care e recunoscut clientul (neprezentări).
@@ -764,6 +767,7 @@ class Item {
     bool? validated,
     String? attendance,
     bool clearAttendance = false,
+    bool? attendanceAuto,
   }) {
     return Item(
       syncId:       syncId       ?? this.syncId,
@@ -780,6 +784,9 @@ class Item {
       validated:    validated ?? this.validated,
       viaBot:       viaBot,
       attendance:   clearAttendance ? null : (attendance ?? this.attendance),
+      attendanceAuto: clearAttendance
+          ? false
+          : (attendanceAuto ?? (attendance != null ? false : this.attendanceAuto)),
     );
   }
 
@@ -799,6 +806,7 @@ class Item {
         'validated':    validated,
         'viaBot':       viaBot,
         'attendance':   attendance,
+        if (attendanceAuto) 'attendanceAuto': true,
       };
 
   factory Item.fromJson(Map<String, dynamic> json) => Item(
@@ -821,6 +829,7 @@ class Item {
         validated:    json['validated'] as bool? ?? false,
         viaBot:       json['viaBot'] as bool? ?? false,
         attendance:   json['attendance'] as String?,
+        attendanceAuto: json['attendanceAuto'] == true,
       );
 
   // Format compact pentru SMS (câmpuri opționale omise dacă sunt goale/null)
@@ -1402,6 +1411,7 @@ class _ManagementPageState extends State<ManagementPage>
       _processSyncQueue();
       _checkLicenseFromPartner();
       _checkSmsFailure();
+      _applyAutoNoShows();
     });
   }
 
@@ -1503,6 +1513,7 @@ class _ManagementPageState extends State<ManagementPage>
       });
     }
     await _refreshNoShows();
+    unawaited(_applyAutoNoShows());
   }
 
   Future<void> _saveItems() async {
@@ -1537,18 +1548,34 @@ class _ManagementPageState extends State<ManagementPage>
           noShow: i.attendance == kNoShow,
         );
     final sources = <NoShowSource>[];
+    // Programările încă neconfirmate — botul le socotește neprezentări după
+    // 24 de ore, ca blocarea să meargă și cu aplicația închisă.
+    final pending = <String, List<String>>{};
+    void addPending(Iterable<Item> items) {
+      for (final i in items) {
+        if (i.attendance != null || i.expiresAt == null) continue;
+        if (_attendanceSince == null || !i.expiresAt!.isAfter(_attendanceSince!)) continue;
+        final key = clientKey(i.clientPhone);
+        if (key.isEmpty) continue;
+        pending.putIfAbsent(key, () => []).add(i.expiresAt!.toIso8601String());
+      }
+    }
     for (final b in _boards) {
       try {
         if (b.id == _activeBoardId) {
           sources
             ..addAll(_items.map(src))
             ..addAll(_deletedBuffer.map((d) => src(d.item)));
+          addPending(_items);
           continue;
         }
         final itemsStr = prefs.getString(_itemsKeyFor(b.id));
         if (itemsStr != null) {
-          sources.addAll((jsonDecode(itemsStr) as List<dynamic>)
-              .map((e) => src(Item.fromJson(e as Map<String, dynamic>))));
+          final items = (jsonDecode(itemsStr) as List<dynamic>)
+              .map((e) => Item.fromJson(e as Map<String, dynamic>))
+              .toList();
+          sources.addAll(items.map(src));
+          addPending(items);
         }
         final deletedStr = prefs.getString(_deletedBufferKeyFor(b.id));
         if (deletedStr != null) {
@@ -1567,6 +1594,7 @@ class _ManagementPageState extends State<ManagementPage>
       for (final r in result.values)
         r.key: [for (final d in r.dates) d.toIso8601String()],
     }));
+    await prefs.setString(kNoShowPendingKey, jsonEncode(pending));
     if (mounted) setState(() => _noShows = result);
   }
 
@@ -1719,6 +1747,10 @@ class _ManagementPageState extends State<ManagementPage>
   Future<void> _processSyncQueue() async {
     if (_loading || _syncQueueBusy) return;
     _syncQueueBusy = true;
+    // Marcarea automată a neprezentărilor scrie aceleași date — o așteptăm.
+    while (_autoNoShowBusy) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
     try {
       final entries = await SyncService.getPendingMessages();
       if (entries.isEmpty) return;
@@ -1799,6 +1831,12 @@ class _ManagementPageState extends State<ManagementPage>
     final alertLeadMin = _loadAlertLead(prefs, boardId);
     bool changed = false;
     final removed = <Item>[];
+    final becameNoShow = <Item>[];
+    void trackNoShow(Item? old, Item incoming) {
+      if (incoming.attendance == kNoShow && old?.attendance != kNoShow) {
+        becameNoShow.add(incoming);
+      }
+    }
     for (final msg in messages) {
       try {
         if (msg.startsWith('PEN:A:') || msg.startsWith('PEN:I:')) {
@@ -1813,6 +1851,7 @@ class _ManagementPageState extends State<ManagementPage>
             if (w != null) incoming = incoming.copyWith(warningAt: w);
           }
           final idx = items.indexWhere((e) => e.syncId == incoming.syncId);
+          trackNoShow(idx == -1 ? null : items[idx], incoming);
           if (idx == -1) {
             items.add(incoming.copyWith(number: nextNumber++));
           } else {
@@ -1823,6 +1862,7 @@ class _ManagementPageState extends State<ManagementPage>
           final j = jsonDecode(msg.substring(6)) as Map<String, dynamic>;
           final incoming = Item.fromSyncJson(j);
           final idx = items.indexWhere((e) => e.syncId == incoming.syncId);
+          trackNoShow(idx == -1 ? null : items[idx], incoming);
           if (idx != -1) {
             items[idx] = incoming.copyWith(number: items[idx].number);
           } else {
@@ -1897,6 +1937,7 @@ class _ManagementPageState extends State<ManagementPage>
       unawaited(_recomputeFreeSlots());
     }
     await _refreshNoShows();
+    if (becameNoShow.isNotEmpty) await _notifyNoShows(becameNoShow);
   }
 
   Future<void> _openBackupScreen() async {
@@ -3049,6 +3090,10 @@ class _ManagementPageState extends State<ManagementPage>
       1: 'L', 2: 'Ma', 3: 'Mi', 4: 'J', 5: 'V', 6: 'S', 7: 'D',
     };
     var blockThreshold = _noShowBlockThreshold;
+    var noShowSms = (await SharedPreferences.getInstance())
+            .getBool(kNoShowSmsKey) ??
+        false;
+    if (!mounted) return;
 
     final saved = await showDialog<bool>(
       context: context,
@@ -3110,6 +3155,16 @@ class _ManagementPageState extends State<ManagementPage>
                             'Clientul blocat poate fi rezervat manual și '
                             'iertat din lista „Clienți cu neprezentări”.',
                     style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Anunță clientul prin SMS la neprezentare'),
+                    subtitle: const Text(
+                      'Cu sincronizare pe două telefoane, activează doar pe unul.',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                    value: noShowSms,
+                    onChanged: (v) => setDs(() => noShowSms = v),
                   ),
                   const SizedBox(height: 8),
                   const SizedBox(height: 8),
@@ -3233,6 +3288,7 @@ class _ManagementPageState extends State<ManagementPage>
     await _saveBookingSettings(_activeBoardId, updated);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(kNoShowThresholdKey, blockThreshold);
+    await prefs.setBool(kNoShowSmsKey, noShowSms);
     await _recomputeFreeSlots();
   }
 
@@ -3432,9 +3488,100 @@ class _ManagementPageState extends State<ManagementPage>
     final updated = value == null
         ? _items[idx].copyWith(clearAttendance: true)
         : _items[idx].copyWith(attendance: value);
+    final before = _items[idx];
     setState(() => _items[idx] = updated);
     await _saveItems();
     await SyncService.sendUpdate(updated);
+    if (before.attendance != kNoShow && updated.attendance == kNoShow) {
+      await _refreshNoShows();
+      await _notifyNoShows([updated]);
+    }
+  }
+
+  // ── Neprezentare automată ────────────────────────────────────────────────────
+  // Programările neconfirmate la 24 de ore după final devin neprezentări, pe
+  // toate tabelele. Fiecare telefon le marchează singur (nu se sincronizează —
+  // celălalt ajunge la același rezultat), deci nu circulă SMS-uri în plus.
+  bool _autoNoShowBusy = false;
+
+  Future<void> _applyAutoNoShows() async {
+    if (_loading || _autoNoShowBusy || _syncQueueBusy || _attendanceSince == null) {
+      return;
+    }
+    _autoNoShowBusy = true;
+    try {
+      final now = DateTime.now();
+      bool due(Item i) =>
+          needsAttendance(i, _attendanceSince, now: now) &&
+          !i.expiresAt!.add(kAutoNoShowAfter).isAfter(now);
+      Item mark(Item i) => i.copyWith(attendance: kNoShow, attendanceAuto: true);
+      final marked = <Item>[];
+
+      final idxs = [for (var i = 0; i < _items.length; i++) if (due(_items[i])) i];
+      if (idxs.isNotEmpty) {
+        setState(() {
+          for (final i in idxs) {
+            _items[i] = mark(_items[i]);
+            marked.add(_items[i]);
+          }
+        });
+        await _saveItems();
+      }
+
+      final prefs = await SharedPreferences.getInstance();
+      for (final b in _boards) {
+        if (b.id == _activeBoardId) continue;
+        final str = prefs.getString(_itemsKeyFor(b.id));
+        if (str == null) continue;
+        try {
+          final items = (jsonDecode(str) as List<dynamic>)
+              .map((e) => Item.fromJson(e as Map<String, dynamic>))
+              .toList();
+          var changed = false;
+          for (var i = 0; i < items.length; i++) {
+            if (!due(items[i])) continue;
+            items[i] = mark(items[i]);
+            marked.add(items[i]);
+            changed = true;
+          }
+          if (changed) {
+            await prefs.setString(_itemsKeyFor(b.id),
+                jsonEncode(items.map((e) => e.toJson()).toList()));
+          }
+        } catch (_) {}
+      }
+
+      if (marked.isNotEmpty) {
+        await _refreshNoShows();
+        await _notifyNoShows(marked);
+      }
+    } finally {
+      _autoNoShowBusy = false;
+    }
+  }
+
+  // ── SMS către client la neprezentare (opțional) ──────────────────────────────
+  // Îl trimite doar telefonul pe care e activă opțiunea, indiferent unde s-a
+  // marcat neprezentarea (aici, pe partener sau automat) — o singură dată pe
+  // programare.
+  Future<void> _notifyNoShows(List<Item> items) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!(prefs.getBool(kNoShowSmsKey) ?? false)) return;
+    if (!LicenseService.isLicensed && !LicenseService.isTrialActive) return;
+    final sent = (prefs.getStringList(kNoShowSmsSentKey) ?? []).toList();
+    for (final item in items) {
+      final phone = item.clientPhone;
+      if (phone == null || item.expiresAt == null) continue;
+      if (sent.contains(item.syncId)) continue;
+      sent.add(item.syncId);
+      await SmsService.sendNow(
+          phone,
+          noShowSmsText(item.startsAt ?? item.expiresAt!, _noShowBlockThreshold,
+              _noShowCountFor(phone)));
+    }
+    // Păstrăm doar ultimele 300 de programări notificate.
+    final trimmed = sent.length > 300 ? sent.sublist(sent.length - 300) : sent;
+    await prefs.setStringList(kNoShowSmsSentKey, trimmed);
   }
 
   Future<void> _showAttendanceDialog(Item item) async {
@@ -3536,7 +3683,9 @@ class _ManagementPageState extends State<ManagementPage>
 
   String _attendanceLabel(Item item) => switch (item.attendance) {
         kCame   => 'A venit',
-        kNoShow => 'Nu a venit',
+        kNoShow => item.attendanceAuto
+            ? 'Nu a venit (neconfirmată în 24 de ore)'
+            : 'Nu a venit',
         _       => _needsAttendance(item) ? 'De confirmat' : '—',
       };
 
@@ -3965,7 +4114,8 @@ class _ManagementPageState extends State<ManagementPage>
                                   color: Colors.orange.shade900,
                                   fontWeight: FontWeight.w600)),
                           subtitle: const Text(
-                              'Marchează dacă oaspeții au venit.'),
+                              'Marchează dacă oaspeții au venit. Neconfirmate '
+                              'în 24 de ore, contează ca neprezentări.'),
                           trailing: TextButton(
                             onPressed: _showPendingAttendance,
                             child: const Text('Confirmă'),

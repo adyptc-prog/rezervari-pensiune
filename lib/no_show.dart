@@ -26,6 +26,29 @@ const kNoShowThresholdOptions = [0, 2, 3, 4, 5];
 
 bool isBlockedBy(int count, int threshold) => threshold > 0 && count >= threshold;
 
+/// După cât timp o programare neconfirmată devine neprezentare.
+const kAutoNoShowAfter = Duration(hours: 24);
+
+/// Programările neconfirmate, pe client: {cheie: [ISO final]} — citit nativ.
+const kNoShowPendingKey = 'no_show_pending';
+
+/// SMS către client la neprezentare: opțiunea (per telefon) și programările
+/// deja anunțate (o singură dată pe programare).
+const kNoShowSmsKey     = 'no_show_sms';
+const kNoShowSmsSentKey = 'no_show_sms_sent';
+
+/// [at] = data sosirii rezervării (sau a plecării, fără sosire).
+String noShowSmsText(DateTime at, int threshold, int count) {
+  String two(int n) => n.toString().padLeft(2, '0');
+  final when = '${two(at.day)}.${two(at.month)}.${at.year}';
+  final base = 'Nu te-ai prezentat la rezervarea din $when.';
+  if (threshold <= 0) return base;
+  if (count >= threshold) {
+    return '$base Nu mai poți face rezervări prin SMS; te rugăm să suni la pensiune.';
+  }
+  return '$base La $threshold neprezentări nu mai poți rezerva prin SMS.';
+}
+
 /// Ultimele 9 cifre ale telefonului; '' dacă are prea puține ca să fie sigur.
 String clientKey(String? phone) {
   final digits = (phone ?? '').replaceAll(RegExp(r'\D'), '');
