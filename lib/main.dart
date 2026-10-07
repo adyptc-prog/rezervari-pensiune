@@ -15,6 +15,7 @@ import 'backup_screen.dart';
 import 'backup_service.dart';
 import 'license_screen.dart';
 import 'license_service.dart';
+import 'no_show.dart';
 
 // ─── Constante ───────────────────────────────────────────────────────────────
 const _kBoardsKey      = 'management_boards';
@@ -732,6 +733,10 @@ class Item {
     this.attendance,
   });
 
+  // Telefonul după care e recunoscut clientul (neprezentări).
+  String? get clientPhone =>
+      noShowClientPhone(phoneNumber, name, description);
+
   List<String> get phones => [
         if (phoneNumber  != null && phoneNumber!.isNotEmpty)  phoneNumber!,
         if (phoneNumber2 != null && phoneNumber2!.isNotEmpty) phoneNumber2!,
@@ -1111,6 +1116,8 @@ class _ManagementPageState extends State<ManagementPage>
   String _smsTemplate = _kDefaultSmsTemplate;
   int _alertLeadMin = kDefaultAlertLeadMin;
   DateTime? _attendanceSince;
+  // Neprezentările active (6 luni), pe client — din toate tabelele.
+  Map<String, NoShowRecord> _noShows = {};
 
   // Înainte ca _loadData să termine încărcarea inițială, _boards e încă gol
   // (Scaffold-ul cu spinner se construiește imediat) — nu explodăm în acel caz.
@@ -1494,6 +1501,7 @@ class _ManagementPageState extends State<ManagementPage>
         _loading    = false;
       });
     }
+    await _refreshNoShows();
   }
 
   Future<void> _saveItems() async {
@@ -1502,6 +1510,7 @@ class _ManagementPageState extends State<ManagementPage>
         jsonEncode(_items.map((e) => e.toJson()).toList()));
     await prefs.setInt(_nextNumberKeyFor(_activeBoardId), _nextNumber);
     unawaited(_recomputeFreeSlots());
+    unawaited(_refreshNoShows());
   }
 
   Future<void> _saveBuffer() async {
@@ -1510,6 +1519,182 @@ class _ManagementPageState extends State<ManagementPage>
     await prefs.setString(
       _deletedBufferKeyFor(_activeBoardId),
       jsonEncode(_deletedBuffer.map((d) => d.toJson()).toList()),
+    );
+    unawaited(_refreshNoShows());
+  }
+
+  // ── Neprezentări ─────────────────────────────────────────────────────────────
+  // Recalculează bilele roșii din toate tabelele (și din programările șterse)
+  // și scrie rezumatul citit de botul SMS (blocarea, la pragul ales).
+  Future<void> _refreshNoShows() async {
+    final prefs = await SharedPreferences.getInstance();
+    NoShowSource src(Item i) => (
+          syncId: i.syncId,
+          phone: i.clientPhone,
+          name: i.name,
+          at: i.expiresAt,
+          noShow: i.attendance == kNoShow,
+        );
+    final sources = <NoShowSource>[];
+    for (final b in _boards) {
+      try {
+        if (b.id == _activeBoardId) {
+          sources
+            ..addAll(_items.map(src))
+            ..addAll(_deletedBuffer.map((d) => src(d.item)));
+          continue;
+        }
+        final itemsStr = prefs.getString(_itemsKeyFor(b.id));
+        if (itemsStr != null) {
+          sources.addAll((jsonDecode(itemsStr) as List<dynamic>)
+              .map((e) => src(Item.fromJson(e as Map<String, dynamic>))));
+        }
+        final deletedStr = prefs.getString(_deletedBufferKeyFor(b.id));
+        if (deletedStr != null) {
+          sources.addAll((jsonDecode(deletedStr) as List<dynamic>)
+              .map((e) => src(DeletedItem.fromJson(e as Map<String, dynamic>).item)));
+        }
+      } catch (_) {
+        // Date corupte într-un tabel — nu blocăm restul.
+      }
+    }
+    final result = computeNoShows(
+        sources, decodeResets(prefs.getString(kNoShowResetsKey)));
+    await prefs.setString(kNoShowSummaryKey, jsonEncode({
+      for (final r in result.values)
+        r.key: [for (final d in r.dates) d.toIso8601String()],
+    }));
+    if (mounted) setState(() => _noShows = result);
+  }
+
+  int _noShowCountFor(String? phone) => _noShows[clientKey(phone)]?.count ?? 0;
+
+  // Iertarea: neprezentările de până acum nu mai contează. Trimisă și
+  // partenerului de pe fiecare tabel, ca bilele să fie aceleași pe ambele.
+  Future<void> _forgiveClient(NoShowRecord record) async {
+    await _applyForgive(record.key, DateTime.now());
+    final msg = forgiveMessage(record.key, DateTime.now());
+    for (final b in _boards) {
+      await SyncService.sendToBoardPartner(b.id, msg);
+    }
+  }
+
+  Future<void> _applyForgive(String key, DateTime at) async {
+    final prefs = await SharedPreferences.getInstance();
+    final resets = decodeResets(prefs.getString(kNoShowResetsKey));
+    if (resets[key] != null && !at.isAfter(resets[key]!)) return;
+    resets[key] = at;
+    await prefs.setString(kNoShowResetsKey, jsonEncode({
+      for (final e in resets.entries) e.key: e.value.toIso8601String(),
+    }));
+    await _refreshNoShows();
+  }
+
+  Future<void> _showNoShowClients() async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDs) {
+          final records = _noShows.values.toList()
+            ..sort((a, b) => b.count != a.count
+                ? b.count.compareTo(a.count)
+                : b.last.compareTo(a.last));
+          return AlertDialog(
+            title: const Text('Clienți cu neprezentări'),
+            content: SizedBox(
+              width: 440,
+              child: records.isEmpty
+                  ? const Text('Niciun client cu neprezentări în ultimele 6 luni.')
+                  : ListView(
+                      shrinkWrap: true,
+                      children: [
+                        Text(
+                          'Neprezentările din ultimele 6 luni. O bilă dispare '
+                          'singură după 6 luni.',
+                          style: TextStyle(
+                              fontSize: 12, color: Colors.grey.shade600),
+                        ),
+                        const SizedBox(height: 8),
+                        for (final r in records)
+                          ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    r.name == r.phone || r.phone.isEmpty
+                                        ? r.name
+                                        : '${r.name} · ${r.phone}',
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                _noShowBalls(r.count),
+                              ],
+                            ),
+                            subtitle: Text(
+                                'Ultima: ${_formatDateTime(r.last)}'),
+                            trailing: TextButton(
+                              onPressed: () async {
+                                final ok = await showDialog<bool>(
+                                  context: ctx,
+                                  builder: (c) => AlertDialog(
+                                    title: const Text('Iartă clientul?'),
+                                    content: Text(
+                                        'Cele ${r.count} neprezentări ale lui '
+                                        '${r.name} nu vor mai conta.'),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(c, false),
+                                        child: const Text('Anulează'),
+                                      ),
+                                      FilledButton(
+                                        onPressed: () => Navigator.pop(c, true),
+                                        child: const Text('Iartă'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (ok != true) return;
+                                await _forgiveClient(r);
+                                setDs(() {});
+                              },
+                              child: const Text('Iartă'),
+                            ),
+                          ),
+                      ],
+                    ),
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Închide'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // Bile roșii pentru neprezentări (maxim 5 desenate, apoi „+N”).
+  Widget _noShowBalls(int count) {
+    if (count <= 0) return const SizedBox.shrink();
+    return Tooltip(
+      message: '$count ${count == 1 ? "neprezentare" : "neprezentări"}',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < count && i < 5; i++)
+            Padding(
+              padding: const EdgeInsets.only(right: 2),
+              child: Icon(Icons.circle, size: 10, color: Colors.red.shade600),
+            ),
+          if (count > 5)
+            Text('+${count - 5}',
+                style: TextStyle(fontSize: 11, color: Colors.red.shade700)),
+        ],
+      ),
     );
   }
 
@@ -1532,6 +1717,12 @@ class _ManagementPageState extends State<ManagementPage>
       final byBoard = <String, List<String>>{};
       for (final e in entries) {
         if (e.msg.isEmpty) continue;
+        // Iertarea unui client — comună tuturor tabelelor.
+        final forgive = parseForgiveMessage(e.msg);
+        if (forgive != null) {
+          await _applyForgive(forgive.$1, forgive.$2);
+          continue;
+        }
         final boardId = e.boardId.isEmpty ? 'b1' : e.boardId;
         byBoard.putIfAbsent(boardId, () => []).add(e.msg);
       }
@@ -1696,6 +1887,7 @@ class _ManagementPageState extends State<ManagementPage>
       if (mounted) setState(() {});
       unawaited(_recomputeFreeSlots());
     }
+    await _refreshNoShows();
   }
 
   Future<void> _openBackupScreen() async {
@@ -2650,6 +2842,24 @@ class _ManagementPageState extends State<ManagementPage>
                   const Divider(),
                   const SizedBox(height: 8),
                   _phoneField(phone1Ctrl, 'Telefon 1 (opțional)', setDs),
+                  if (_noShowCountFor(phone1Ctrl.text) > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Row(
+                        children: [
+                          _noShowBalls(_noShowCountFor(phone1Ctrl.text)),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              'Clientul are ${_noShowCountFor(phone1Ctrl.text)} '
+                              'neprezentări în ultimele 6 luni.',
+                              style: TextStyle(
+                                  fontSize: 12, color: Colors.red.shade700),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   const SizedBox(height: 10),
                   _phoneField(phone2Ctrl, 'Telefon 2 (opțional)', setDs),
                   const SizedBox(height: 10),
@@ -3325,6 +3535,13 @@ class _ManagementPageState extends State<ManagementPage>
                 _detailRow('SMS la', item.phones.join('\n'),
                     valueColor: Colors.blue.shade700),
               ],
+              if (_noShowCountFor(item.clientPhone) > 0) ...[
+                const SizedBox(height: 10),
+                _detailRow(
+                    'Neprezentări',
+                    '${_noShowCountFor(item.clientPhone)} în ultimele 6 luni',
+                    valueColor: Colors.red.shade700),
+              ],
               if (_isExpired(item)) ...[
                 const SizedBox(height: 10),
                 _detailRow('Prezență', _attendanceLabel(item),
@@ -3422,6 +3639,33 @@ class _ManagementPageState extends State<ManagementPage>
         ),
         overflow: TextOverflow.ellipsis,
         maxLines: 1,
+      ),
+    );
+  }
+
+  Widget _nameCell(Item item, bool expired) {
+    final count = _noShowCountFor(item.clientPhone);
+    if (count == 0) return _dataCell(item.name, width: 160, expired: expired);
+    return Container(
+      width: 160,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      child: Row(
+        children: [
+          Flexible(
+            child: Text(
+              item.name,
+              style: TextStyle(
+                fontSize: 13,
+                color: expired ? Colors.red.shade700 : Colors.black87,
+                fontWeight: expired ? FontWeight.w500 : FontWeight.normal,
+              ),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
+          ),
+          const SizedBox(width: 4),
+          _noShowBalls(count),
+        ],
       ),
     );
   }
@@ -3552,6 +3796,14 @@ class _ManagementPageState extends State<ManagementPage>
                   ? 'Sincronizare activă · ${SyncService.partnerPhone}'
                   : 'Configurează sincronizare',
               onPressed: _showSyncDialog,
+            ),
+          // Clienți cu neprezentări — doar când există
+          if (_noShows.isNotEmpty)
+            IconButton(
+              icon: Icon(Icons.person_off_outlined,
+                  color: Colors.redAccent.shade100),
+              tooltip: 'Clienți cu neprezentări',
+              onPressed: _showNoShowClients,
             ),
           // Buton backup & restaurare — vizibil doar pe Android
           if (BackupService.isSupported)
@@ -3817,7 +4069,7 @@ class _ManagementPageState extends State<ManagementPage>
                                                     child: Row(
                                                       children: [
                                                         _dataCell(item.number.toString(), width: 70,  expired: expired),
-                                                        _dataCell(item.name,              width: 160, expired: expired),
+                                                        _nameCell(item, expired),
                                                         _dataCell(item.description,       width: 200, expired: expired),
                                                         _dataCell(_formatDateTime(item.createdAt), width: 155, expired: expired),
                                                         _dataCell(
