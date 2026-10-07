@@ -100,7 +100,7 @@ class ClientBookingReceiverTest {
     }
 
     @Test
-    fun `peste 10 comenzi pe ora botul tace`() {
+    fun `peste limita pe ora vine o singura explicatie, apoi botul tace`() {
         repeat(BotLimits.MAX_COMMANDS_PER_NUMBER_PER_HOUR) {
             clearSent()
             receiver.handleMessage(context, client, "liber")
@@ -108,6 +108,87 @@ class ClientBookingReceiverTest {
         }
         clearSent()
         receiver.handleMessage(context, client, "liber")
+        assertTrue(lastSent()!!.startsWith("Ai trimis multe mesaje"))
+        assertTrue(Regex("după ora \\d{2}:\\d{2}").containsMatchIn(lastSent()!!))
+        clearSent()
+        receiver.handleMessage(context, client, "liber")
+        receiver.handleMessage(context, client, "3")
+        assertNull(lastSent())
+    }
+
+    @Test
+    fun `al doilea LIBER porneste o lista noua, iar alegerea merge pe ea`() {
+        receiver.handleMessage(context, client, "liber")
+        receiver.handleMessage(context, client, "liber")
+        clearSent()
+        receiver.handleMessage(context, client, "2")
+        assertTrue(lastSent()!!.startsWith("Disponibil 2 nopți"))
+    }
+
+    @Test
+    fun `cu lista activa sunt acceptate si forme ca 3 punct sau optiunea 3`() {
+        for (text in listOf("2.", "opțiunea 2", "Nr. 2", "2)")) {
+            context.getSharedPreferences("ClientBookingPrefs", Context.MODE_PRIVATE).edit().clear().commit()
+            SmsSyncReceiver.acknowledge(context,
+                (0 until JSONArray(SmsSyncReceiver.snapshot(context)).length()).map {
+                    JSONArray(SmsSyncReceiver.snapshot(context)).getJSONObject(it).getString("id")
+                })
+            receiver.handleMessage(context, client, "liber")
+            receiver.handleMessage(context, client, "1")
+            clearSent()
+            receiver.handleMessage(context, client, text)
+            assertTrue("„$text”: ${lastSent()}", lastSent()!!.startsWith("Rezervarea ta la Salon Ana"))
+        }
+    }
+
+    @Test
+    fun `la intrebarea Cate nopti se accepta si 2 nopti`() {
+        for (text in listOf("2 nopți", "2 nopti", "2 zile", "2.")) {
+            context.getSharedPreferences("ClientBookingPrefs", Context.MODE_PRIVATE).edit().clear().commit()
+            receiver.handleMessage(context, client, "liber")
+            clearSent()
+            receiver.handleMessage(context, client, text)
+            assertTrue("„$text”: ${lastSent()}", lastSent()!!.startsWith("Disponibil 2 nopți"))
+        }
+    }
+
+    @Test
+    fun `fara lista activa formele libere sunt ignorate`() {
+        receiver.handleMessage(context, client, "opțiunea 2")
+        receiver.handleMessage(context, client, "2.")
+        assertNull(lastSent())
+    }
+
+    @Test
+    fun `text nerecunoscut cu lista activa primeste ajutor o singura data`() {
+        receiver.handleMessage(context, client, "liber")
+        clearSent()
+        receiver.handleMessage(context, client, "de vineri până duminică")
+        assertTrue(lastSent()!!.startsWith("Nu am înțeles. Răspunde doar cu numărul de nopți"))
+        clearSent()
+        receiver.handleMessage(context, client, "alo?")
+        assertNull(lastSent())
+        // La lista de date, alt ajutor.
+        receiver.handleMessage(context, client, "1")
+        clearSent()
+        receiver.handleMessage(context, client, "vreau weekendul")
+        assertTrue(lastSent()!!.startsWith("Nu am înțeles. Răspunde doar cu numărul variantei"))
+        clearSent()
+        receiver.handleMessage(context, client, "alo?")
+        assertNull(lastSent())
+        // O listă nouă poate primi din nou ajutor.
+        receiver.handleMessage(context, client, "liber")
+        clearSent()
+        receiver.handleMessage(context, client, "alo?")
+        assertNotNull(lastSent())
+    }
+
+    @Test
+    fun `mesajele lungi nu primesc ajutor nici cu lista activa`() {
+        receiver.handleMessage(context, client, "liber")
+        clearSent()
+        receiver.handleMessage(context, client,
+            "Salut, ne vedem diseară la cină? Adu te rog și cartea pe care ți-am împrumutat-o.")
         assertNull(lastSent())
     }
 

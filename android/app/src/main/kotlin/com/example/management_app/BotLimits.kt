@@ -10,11 +10,12 @@ import org.json.JSONObject
  * SMS-uri sau ocupa toate orele libere.
  *
  * Starea (persistată de ClientBookingReceiver în ClientBookingPrefs):
- *   { "perNumber": { "<cifre>": [ts, ts, ...] }, "day": "yyyy-MM-dd", "dayCount": n }
+ *   { "perNumber": { "<cifre>": [ts, ts, ...] }, "day": "yyyy-MM-dd", "dayCount": n,
+ *     "limitNotice": { "<cifre>": ts } }
  */
 object BotLimits {
 
-    const val MAX_COMMANDS_PER_NUMBER_PER_HOUR = 10
+    const val MAX_COMMANDS_PER_NUMBER_PER_HOUR = 15
     const val MAX_REPLIES_PER_DAY = 100
     const val MAX_ACTIVE_BOOKINGS_PER_NUMBER = 2
 
@@ -64,6 +65,30 @@ object BotLimits {
             }
             if (kept.length() == 0) perNumber.remove(key) else perNumber.put(key, kept)
         }
+    }
+
+    /**
+     * Peste limita pe număr, clientul primește O SINGURĂ explicație pe oră
+     * (altfel ar crede că botul s-a stricat); repetările de după ea rămân
+     * fără răspuns, ca să nu se poată genera SMS-uri la nesfârșit. Nici
+     * explicația nu trece peste plafonul zilnic. Întoarce momentul (ms) de
+     * la care numărul poate scrie din nou, sau null dacă nu trimitem nimic.
+     * [state] e modificat pe loc.
+     */
+    fun limitNotice(state: JSONObject, senderDigits: String, nowMs: Long): Long? {
+        val notices = state.optJSONObject("limitNotice") ?: JSONObject().also { state.put("limitNotice", it) }
+        for (key in notices.keys().asSequence().toList()) {
+            if (nowMs - notices.optLong(key, 0L) >= HOUR_MS) notices.remove(key)
+        }
+        if (notices.has(senderDigits)) return null
+        if (state.optInt("dayCount", 0) >= MAX_REPLIES_PER_DAY) return null
+        val recent = state.optJSONObject("perNumber")?.optJSONArray(senderDigits) ?: return null
+        if (recent.length() == 0) return null
+        var oldest = Long.MAX_VALUE
+        for (i in 0 until recent.length()) oldest = minOf(oldest, recent.optLong(i, nowMs))
+        notices.put(senderDigits, nowMs)
+        state.put("dayCount", state.optInt("dayCount", 0) + 1)
+        return oldest + HOUR_MS
     }
 
     fun canBookMore(activeBookings: Int): Boolean = activeBookings < MAX_ACTIVE_BOOKINGS_PER_NUMBER
